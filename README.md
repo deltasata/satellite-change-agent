@@ -149,6 +149,9 @@ python -m experiments.b2_rules && .venv-ml/bin/python -m experiments.b2_train --
 .venv-ml/bin/python -m experiments.b2_train --plan B-final && .venv-ml/bin/python -m experiments.b2_eval
 .venv-ml/bin/python -m experiments.b2_report B-final  # comparison with published numbers
 python -m experiments.b1_report                       # optical table
+# the networks the agent uses for new places (trained on every flood event), then export to ONNX:
+.venv-ml/bin/python -m experiments.b1_train --model unet --event ALL
+.venv-ml/bin/python -m experiments.b2_train --plan A-all --gpus 0,1,2
 ```
 
 ## Data, models and licences

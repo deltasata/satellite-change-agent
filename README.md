@@ -1,0 +1,167 @@
+# eo-agent
+
+**Ask a question about any place on Earth in plain language: "Was this town flooded after the storm?",
+"Was there new construction here since 2022?" The system finds free satellite images, measures the
+change, and answers yes / no / cannot tell, with the numbers and an evidence figure.**
+
+Every learned model in the answer path had to **beat the rule it replaces**, under a protocol fixed
+**before any score was computed**, on **flood events it had never seen**, with intervals from a
+cluster bootstrap over events.
+
+![results](docs/figures/results.png)
+
+| step | rule it replaced | learned model adopted | gain [95 % interval] |
+|---|---|---|---|
+| which pixels are water, optical (Sentinel-2) | NDWI > 0: 0.690 IoU | **U-Net: 0.833** | +0.143 [+0.083, +0.219] |
+| which pixels are water, radar (Sentinel-1, sees through cloud) | VH < t: 0.477 IoU | **TerraMind-1.0, fine-tuned: 0.611** | +0.134 [+0.090, +0.192] |
+| flood questions answered correctly, end to end | 0.639 (optical rule) | **0.889** (optical U-Net, radar TerraMind when cloudy) | +0.167 over optical U-Net [+0.031, +0.346] |
+
+## What it does
+
+```text
+You     Was the area at Conselice (44.5063 N, 11.8276 E) flooded around 2023-05-23?
+
+Agent   Yes. Water covered 0.06 % of the 5 km area in the weeks before and 19.6 % just after
+        (new water 19.5 %; the threshold is 5 %). Evidence figure attached.
+
+You     Please double check this.
+
+Agent   Measured again with a different before period (31 March to 19 May): yes, new water 20.3 %,
+        from 2 clear images before and 1 after.
+
+You     And was there new construction in the same area between summer 2022 and summer 2023?
+
+Agent   Yes: 3.9 % of the area changed (threshold 3 %).
+```
+
+*The conversation is shortened; every number in it is what `measure_change` returns for these inputs.*
+
+![evidence](docs/figures/conselice_flood.png)
+
+## How it works
+
+```mermaid
+flowchart LR
+    P[person] --> S{off-topic check<br/>local Qwen3}
+    S -->|on topic| C[Claude<br/>holds the conversation]
+    C -->|MCP| M[measure_change<br/>deterministic code]
+    M --> O[Sentinel-2 L2A<br/>cloud mask, median composites]
+    O --> U[U-Net: water pixels]
+    M -->|optical cannot tell:<br/>clouds| R[Sentinel-1 RTC radar]
+    R --> T[TerraMind: water pixels]
+    U --> D[decision rule<br/>+ evidence]
+    T --> D
+    D --> C
+    C --> K{answer and every number<br/>must come from the measurement}
+    K --> P
+```
+
+- **The language model never measures.** Claude only talks and chooses the inputs of one function,
+  `measure_change(lat, lon, kind, event_date | periods)`. The function is plain code: same inputs, same
+  answer.
+- **Two checks in code**, not in the prompt: off-topic questions never reach Claude; the reply's answer
+  and every number in it must be found in the function's results, otherwise the reply is rewritten.
+- **Clouds are handled physically.** When clouds hide the ground, the system switches to Sentinel-1
+  radar, which sees through cloud, instead of guessing.
+- **All free.** Open satellite archives (Earth Search, Planetary Computer), open models, and Claude
+  through a subscription login (the code refuses to run with a paid API key). Every model fits on one
+  24 GB GPU; the deployed networks run on a CPU from ONNX files.
+
+## Research findings
+
+1. **A small U-Net trained from scratch beats 300M-parameter foundation models for optical water**
+   (0.833 vs Prithvi-EO-2.0 0.712 and TerraMind 0.698, leaving each flood out). The foundation models are
+   within 0.03 on 9 of 10 floods but collapse on one hazy scene whose land is brighter than any training
+   flood.
+2. **For radar, the foundation model wins** (TerraMind 0.611 vs U-Net 0.558 vs best threshold 0.477),
+   with much more stable seeds. Pretraining on radar pays off where the signal is speckled and subtle.
+3. **Image processing level is a silent failure mode.** The published Prithvi-EO-2.0 Sen1Floods11 model
+   drops from water IoU 0.817 on Level-1C images to 0.634 on the Level-2A images an operational pipeline
+   actually reads. We therefore rebuilt Sen1Floods11 in the pipeline's own formats (Level-2A optical,
+   RTC radar) on the label grid, and train and test on those.
+4. **Muddy flood water has negative NDWI.** Sediment reflects near infrared, so the standard index misses
+   it (one tile: 2 % of the water found); short-wave infrared still sees it, and the U-Net learned that.
+5. **Radar rescues cloud-covered questions.** 19 of 72 flood questions had no usable optical image;
+   radar answered 14 of them, 12 correctly.
+6. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
+   arithmetic from the LLM into code raised a local 8B model from 0.48 to 0.66 on the benchmark.
+
+Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
+
+## Status and roadmap
+
+| component | status |
+|---|---|
+| optical water: U-Net replaces NDWI | done |
+| radar water for cloudy floods: TerraMind | done |
+| comparison with published Sen1Floods11 numbers (official split) | running |
+| cloud mask: learned (OmniCloudMask) vs ESA scene classification | next |
+| construction: Siamese change network vs change-vector rule (OSCD) | planned |
+| burn scars: segmentation model vs rule | planned |
+| a model that reads every clear date of the time series, not two composites | planned |
+
+## Repository
+
+```text
+core/            satellite data access (STAC, COGs), cloud mask, time-series cube, measure_change
+core/models/     water detectors (U-Net, TerraMind via ONNX), change detectors
+mcp_server/      MCP servers: measure_change, and the four step functions
+agents/          the chat agent (Claude Agent SDK), LangGraph workflow, model back ends
+experiments/     b1_* optical water, b2_* radar water: data copies, training, reports, exports
+eval/            the benchmarks (44 and 150 questions), reference pipeline, metrics
+examples/        chat.py: a conversation with the agent
+tests/           unit and integration tests
+docs/            METHODS.md, figures
+```
+
+## Run it
+
+```bash
+python -m venv .venv && source .venv/bin/activate && pip install -e .     # pipeline (CPU)
+python -m venv .venv-ml && .venv-ml/bin/pip install -e ".[ml]"            # training (one GPU)
+
+python -m pytest -q -m "not network"
+
+# the trained networks are not stored in the repository yet (a download will follow); until then,
+# train them as below and export them to ONNX:
+.venv-ml/bin/python -m experiments.b1_export && .venv-ml/bin/python -m experiments.b2_export
+
+# answer one question with fixed code (no language model)
+python -c "from core.measure import measure_change as m; \
+  print(m(lat=44.5063, lon=11.8276, kind='flood', event_date='2023-05-23').answer)"
+
+# talk to the agent (needs a Claude Code login and a local Qwen3 server for the off-topic check)
+scripts/serve_llm.sh Qwen/Qwen3-8B 0 8101
+python examples/chat.py --chat
+```
+
+Reproducing the results (about 3 hours on four 24 GB GPUs):
+
+```bash
+python -m core.data.sen1floods11 && python -m core.data.sen1floods11_l2a && python -m core.data.sen1floods11_s1rtc
+python -m experiments.b1_rules && .venv-ml/bin/python -m experiments.b1_train --run-all --gpus 0,1,2,3
+python -m experiments.b2_rules && .venv-ml/bin/python -m experiments.b2_train --plan A,B-select --gpus 0,1,2,3
+.venv-ml/bin/python -m experiments.b2_report A        # radar table
+python -m experiments.b1_report                       # optical table
+```
+
+## Data, models and licences
+
+| | source | licence |
+|---|---|---|
+| Sentinel-2 L2A | Copernicus, via [Element84 Earth Search](https://earth-search.aws.element84.com/v1) | Copernicus open licence |
+| Sentinel-1 RTC | Copernicus, via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/sentinel-1-rtc) | Copernicus open licence |
+| Sen1Floods11 | Bonafilia et al. 2020, `gs://sen1floods11` | CC BY 4.0 |
+| Prithvi-EO-2.0 | NASA / IBM, Hugging Face `ibm-nasa-geospatial` | Apache-2.0 |
+| TerraMind-1.0 | IBM / ESA, Hugging Face `ibm-esa-geospatial` | Apache-2.0 |
+| Qwen3 | Alibaba, Hugging Face `Qwen` | Apache-2.0 |
+
+Code: Apache-2.0 (see `LICENSE`). Model weights and data are downloaded by scripts, not stored here.
+
+## References
+
+- Bonafilia et al., *Sen1Floods11: a georeferenced dataset to train and test deep learning flood
+  algorithms for Sentinel-1*, CVPR Workshops 2020.
+- Szwarcman et al., *Prithvi-EO-2.0: a versatile multi-temporal foundation model for Earth observation*, 2024.
+- Jakubik et al., *TerraMind: large-scale generative multimodality for Earth observation*, arXiv 2504.11171, 2025.
+- Marsocci et al., *PANGAEA: a global and inclusive benchmark for geospatial foundation models*, arXiv 2412.04204, 2024.

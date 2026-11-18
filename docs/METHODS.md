@@ -39,7 +39,7 @@ Every learned component in this system had to beat the rule it replaces, under a
 atmosphere) and Earth-Engine sigma-naught radar. The pipeline reads Level-2A optical and RTC gamma-naught
 radar. A model that is excellent on the data set's images can fail on the pipeline's: the published
 Prithvi-EO-2.0 Sen1Floods11 model scores **water IoU 0.817 on Level-1C but 0.634 on Level-2A** (official
-test tiles), below the simple rule. So two copies of Sen1Floods11 were built **in the pipeline's own
+test and Bolivia tiles), below the simple rule NDWI > 0 on the same Level-2A tiles (0.638). So two copies of Sen1Floods11 were built **in the pipeline's own
 image formats**, same scene, read onto the hand label's pixel grid:
 
 - `core/data/sen1floods11_l2a.py`: Level-2A, 376 tiles, 10 events (India 2016 predates the L2A archive).
@@ -172,9 +172,9 @@ periods; TerraMind gives a water probability per scene; per period, the per-pixe
 | **optical U-Net, then radar with TerraMind** | **0.889** | **5** |
 
 Gain over optical alone: **+0.167 [+0.031, +0.346]**. Radar answered 14 previously unanswerable
-questions, 12 of them correctly. The pipeline's own code (`measure_change`) reproduces the experiment's
-answers. The 6 India 2016 questions have no optical image at all; with radar, 2 of 6 are answered
-correctly (the monsoon had already flooded the "before" period in 4).
+questions, 12 of them correctly. The pipeline's own code (`measure_change`) gives the experiment's numbers exactly on the questions
+checked so far; the check of all 78 questions is running. The 6 India 2016 questions have no optical image at all; with radar, 2 of 6 are answered
+correctly (the 2 "no" questions; the 4 "yes" questions were answered "no").
 
 ## 6. Comparison with published Sen1Floods11 results
 

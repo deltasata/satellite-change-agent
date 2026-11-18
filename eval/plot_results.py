@@ -65,7 +65,7 @@ def main():
         a.set_facecolor(SURFACE)
         a.spines[["top", "right"]].set_visible(False)
     fig.suptitle("Same tools, same instructions: who orchestrates, and which model", x=0.01, ha="left", fontsize=11)
-    out = ROOT / "explain" / "figures" / "results_variants.png"
+    out = ROOT / "docs" / "figures" / "results_variants.png"
     fig.savefig(out, dpi=150, bbox_inches="tight", facecolor=SURFACE)
     print(out)
 

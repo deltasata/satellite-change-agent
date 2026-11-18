@@ -10,4 +10,4 @@ export EO_DATA_CACHE="$_EO_ROOT/data_cache"
 export MPLCONFIGDIR="$_EO_ROOT/.cache/matplotlib"     # matplotlib needs a writable cache
 export XDG_CACHE_HOME="$_EO_ROOT/.cache"            # fontconfig and other tools
 export HF_HOME="$_EO_ROOT/data_cache/hf"             # model weights (home is read-only; keep inside project)
-echo "eo-agent env active: $(python --version) at $(command -v python)"
+echo "satellite-change-agent env active: $(python --version) at $(command -v python)"

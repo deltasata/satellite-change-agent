@@ -1,4 +1,4 @@
-# eo-agent
+# satellite-change-agent
 
 **Ask a question about any place on Earth in plain language: "Was this town flooded after the storm?",
 "Was there new construction here since 2022?" The system finds free satellite images, measures the
@@ -14,7 +14,7 @@ cluster bootstrap over events.
 |---|---|---|---|
 | which pixels are water, optical (Sentinel-2) | NDWI > 0: 0.690 IoU | **U-Net: 0.833** | +0.143 [+0.083, +0.219] |
 | which pixels are water, radar (Sentinel-1, sees through cloud) | VH < t: 0.477 IoU | **TerraMind-1.0, fine-tuned: 0.611** | +0.134 [+0.090, +0.192] |
-| flood questions answered correctly, end to end | 0.639 (optical rule) | **0.889** (optical U-Net, radar TerraMind when cloudy) | +0.167 over optical U-Net [+0.031, +0.346] |
+| flood questions answered correctly (72), end to end | optical images only: 0.722 | **optical U-Net + radar TerraMind when cloudy: 0.889** | +0.167 [+0.031, +0.346] |
 
 ## What it does
 
@@ -69,8 +69,8 @@ flowchart LR
 
 ## Research findings
 
-1. **A small U-Net trained from scratch beats 300M-parameter foundation models for optical water**
-   (0.833 vs Prithvi-EO-2.0 0.712 and TerraMind 0.698, leaving each flood out). The foundation models are
+1. **A small U-Net (14M parameters) trained from scratch beats fine-tuned foundation models of 100-300M
+   parameters for optical water** (0.833 vs Prithvi-EO-2.0 0.712 and TerraMind 0.698, leaving each flood out). The foundation models are
    within 0.03 on 9 of 10 floods but collapse on one hazy scene whose land is brighter than any training
    flood.
 2. **For radar, the foundation model wins** (TerraMind 0.611 vs U-Net 0.558 vs best threshold 0.477),
@@ -139,13 +139,15 @@ scripts/serve_llm.sh Qwen/Qwen3-8B 0 8101
 python examples/chat.py --chat
 ```
 
-Reproducing the results (about 3 hours on four 24 GB GPUs):
+Reproducing the results (about 4 hours on four 24 GB GPUs):
 
 ```bash
 python -m core.data.sen1floods11 && python -m core.data.sen1floods11_l2a && python -m core.data.sen1floods11_s1rtc
 python -m experiments.b1_rules && .venv-ml/bin/python -m experiments.b1_train --run-all --gpus 0,1,2,3
 python -m experiments.b2_rules && .venv-ml/bin/python -m experiments.b2_train --plan A,B-select --gpus 0,1,2,3
 .venv-ml/bin/python -m experiments.b2_report A        # radar table
+.venv-ml/bin/python -m experiments.b2_train --plan B-final && .venv-ml/bin/python -m experiments.b2_eval
+.venv-ml/bin/python -m experiments.b2_report B-final  # comparison with published numbers
 python -m experiments.b1_report                       # optical table
 ```
 
@@ -153,8 +155,8 @@ python -m experiments.b1_report                       # optical table
 
 | | source | licence |
 |---|---|---|
-| Sentinel-2 L2A | Copernicus, via [Element84 Earth Search](https://earth-search.aws.element84.com/v1) | Copernicus open licence |
-| Sentinel-1 RTC | Copernicus, via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/sentinel-1-rtc) | Copernicus open licence |
+| Sentinel-2 L2A | Copernicus, via [Element84 Earth Search](https://earth-search.aws.element84.com/v1) | free and open Copernicus data; provider terms apply |
+| Sentinel-1 RTC | Copernicus, via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/sentinel-1-rtc) | free and open Copernicus data; provider terms apply |
 | Sen1Floods11 | Bonafilia et al. 2020, `gs://sen1floods11` | CC BY 4.0 |
 | Prithvi-EO-2.0 | NASA / IBM, Hugging Face `ibm-nasa-geospatial` | Apache-2.0 |
 | TerraMind-1.0 | IBM / ESA, Hugging Face `ibm-esa-geospatial` | Apache-2.0 |
@@ -166,6 +168,6 @@ Code: Apache-2.0 (see `LICENSE`). Model weights and data are downloaded by scrip
 
 - Bonafilia et al., *Sen1Floods11: a georeferenced dataset to train and test deep learning flood
   algorithms for Sentinel-1*, CVPR Workshops 2020.
-- Szwarcman et al., *Prithvi-EO-2.0: a versatile multi-temporal foundation model for Earth observation*, 2024.
+- Szwarcman et al., *Prithvi-EO-2.0: a versatile multi-temporal foundation model for Earth observation*, arXiv 2412.02732, 2024.
 - Jakubik et al., *TerraMind: large-scale generative multimodality for Earth observation*, arXiv 2504.11171, 2025.
 - Marsocci et al., *PANGAEA: a global and inclusive benchmark for geospatial foundation models*, arXiv 2412.04204, 2024.

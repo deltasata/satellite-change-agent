@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "eo-agent"
+name = "satellite-change-agent"
 version = "0.1.0"
-description = "An agent for change detection in Sentinel-2 image time series, built three ways."
+description = "Answers questions about floods and land change from free satellite images; learned models adopted only where they beat the rules."
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.7",

@@ -83,7 +83,11 @@ flowchart LR
    it (one tile: 2 % of the water found); short-wave infrared still sees it, and the U-Net learned that.
 5. **Radar rescues cloud-covered questions.** 19 of 72 flood questions had no usable optical image;
    radar answered 14 of them, 12 correctly.
-6. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
+6. **Under the published setup, the same training reaches the published state of the art.** On
+   Sen1Floods11's official test split: radar TerraMind 0.672 water IoU (published 0.680), optical U-Net
+   0.830 (published TerraMind 0.823), radar + optical U-Net mIoU 0.911 (published U-Net 0.914), all
+   within the seed-to-seed spread. The lower numbers above come from the harder, operational test.
+7. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
    arithmetic from the LLM into code raised a local 8B model from 0.48 to 0.66 on the benchmark.
 
 Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
@@ -94,7 +98,7 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 |---|---|
 | optical water: U-Net replaces NDWI | done |
 | radar water for cloudy floods: TerraMind | done |
-| comparison with published Sen1Floods11 numbers (official split) | running |
+| comparison with published Sen1Floods11 numbers (official split) | done: on par (within 0.01) |
 | cloud mask: learned (OmniCloudMask) vs ESA scene classification | next |
 | construction: Siamese change network vs change-vector rule (OSCD) | planned |
 | burn scars: segmentation model vs rule | planned |

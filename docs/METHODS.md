@@ -178,19 +178,34 @@ correctly (the monsoon had already flooded the "before" period in 4).
 
 ## 6. Comparison with published Sen1Floods11 results
 
-*In progress.* On the data set's own images and its official split (train 252, validation 89, test 90),
-settings chosen on the validation part only; then 5 seeds and test-time flips, kept only if they help
-on validation; the test part is scored once. Validation water IoU so far (seed 0):
+Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
+optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
+15 tiles, held out apart). Settings were chosen on the validation part only: for the U-Net, encoder
+(ResNet-18 / 34) and loss (cross-entropy, or cross-entropy + Dice), 4 combinations; for TerraMind, the
+learning rate (5e-5 / 1e-4). The chosen setting was trained with 5 seeds; whether to average the 5 seeds
+and to average 8 flipped and rotated views at prediction time was also decided on validation. The test
+part was scored once, at the end. Pooled over all test pixels, as in the published papers.
 
-| input | U-Net (best of 4 settings) | TerraMind-1.0-base (best of 2) | rule VH < t |
-|---|---|---|---|
-| radar (VV, VH) | 0.618 | **0.661** | 0.493 |
-| optical (13 bands, L1C) | **0.830** | 0.816 | |
-| radar + optical | **0.836** | 0.818 | |
+| input | model | test water IoU | test mIoU | single seeds (water IoU) | published (same test part) |
+|---|---|---|---|---|---|
+| radar | rule VH < t (fitted) | 0.533 | 0.728 | | |
+| radar | U-Net | 0.663 | 0.806 | 0.650-0.666 | |
+| radar | **TerraMind-1.0-base** | **0.672** | **0.811** | 0.654-0.679 | TerraMind-1.0-base: 0.680 / 0.811 [1] |
+| optical | **U-Net** | **0.830** | **0.903** | 0.822-0.842 | TerraMind-1.0-base: 0.823 / 0.897 [1] |
+| optical | TerraMind-1.0-base | 0.824 | 0.899 | 0.812-0.824 | |
+| radar + optical | **U-Net** | **0.844** | **0.911** | 0.833-0.844 | U-Net: mIoU 0.914 [2] |
+| radar + optical | TerraMind-1.0-base | 0.821 | 0.897 | 0.801-0.824 | |
 
-Published test-set references: radar only, TerraMind-1.0-base water IoU 0.680 / mIoU 0.811 (Jakubik et
-al. 2025, Table 8); optical, 0.823 / 0.897 (same table); radar + optical, U-Net mIoU 0.914 (PANGAEA,
-Table 5).
+[1] Jakubik et al. 2025, Table 8. [2] PANGAEA, Marsocci et al. 2024, Table 5.
+
+**Our numbers reproduce the published ones to within 0.01**, in both directions: optical U-Net +0.007
+water IoU over the published TerraMind result; radar TerraMind −0.008; radar + optical U-Net −0.003 mIoU.
+These differences are smaller than the spread between single seeds (about 0.02), so the honest
+statement is *on par with the published state of the art*, not *better*. Two things this establishes:
+our training setup is sound, and the large losses in sections 3 and 4 come from the harder test (a whole
+flood never seen, in the pipeline's own image formats), not from weak training. Combining radar and
+optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
+keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
 ## 7. The agent benchmark
 

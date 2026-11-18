@@ -172,8 +172,7 @@ periods; TerraMind gives a water probability per scene; per period, the per-pixe
 | **optical U-Net, then radar with TerraMind** | **0.889** | **5** |
 
 Gain over optical alone: **+0.167 [+0.031, +0.346]**. Radar answered 14 previously unanswerable
-questions, 12 of them correctly. The pipeline's own code (`measure_change`) gives the experiment's numbers exactly on the questions
-checked so far; the check of all 78 questions is running. The 6 India 2016 questions have no optical image at all; with radar, 2 of 6 are answered
+questions, 12 of them correctly. The pipeline's own code (`measure_change`) gives the experiment's answer on all 78 questions. The 6 India 2016 questions have no optical image at all; with radar, 2 of 6 are answered
 correctly (the 2 "no" questions; the 4 "yes" questions were answered "no").
 
 ## 6. Comparison with published Sen1Floods11 results

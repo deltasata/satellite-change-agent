@@ -4,6 +4,8 @@ Output: an xarray Dataset with dimensions (time, y, x):
   - one float32 variable per band, in physical surface reflectance,
     NaN wherever the pixel is cloud / shadow / no-data;
   - "scl": the raw ESA class map (kept for evidence and debugging);
+  - "cloud_class" (only with cloud="ocm"): OmniCloudMask's classes, 0 clear, 1 thick cloud, 2 thin cloud,
+    3 cloud shadow;
   - "valid_fraction": per time step, the fraction of the area that is usable.
 
 Times are wherever the satellite happened to pass, not a regular grid, and
@@ -46,17 +48,32 @@ def utm_epsg(bbox: BBox) -> int:
     return (32600 if lat >= 0 else 32700) + zone
 
 
+# Which pixels are cloud or shadow. "scl": ESA's scene classification (core/data/cloud_mask.py), the rule
+# until milestone B3. "ocm": OmniCloudMask (core/models/cloud.py), which beat it on 953 expert-labelled
+# test images (IoU of "unusable" 0.885 against 0.644). With "ocm", SCL still removes its classes 0 (no
+# data) and 1 (saturated or defective pixel): those are facts about the file, not cloud decisions.
+CLOUD_DETECTORS = ("scl", "ocm")
+OCM_BANDS = ("red", "green", "nir08")
+FILE_FAULTS = frozenset({0, 1})
+
+
 def load_timeseries(
     scenes: list[Scene],
     bbox: BBox,
     bands: tuple[str, ...] = DEFAULT_BANDS,
     resolution: float = 10.0,
+    cloud: str = "scl",
 ) -> xr.Dataset:
     """Download the pixels of `scenes` inside `bbox` and return the masked cube."""
     import odc.stac  # heavy import, only needed here
 
     if not scenes:
         raise ValueError("no scenes given")
+    if cloud not in CLOUD_DETECTORS:
+        raise ValueError(f"cloud must be one of {CLOUD_DETECTORS}")
+    out_bands = bands
+    if cloud == "ocm":  # OmniCloudMask reads red, green and B8A; load them even if not asked for
+        bands = (*bands, *[b for b in OCM_BANDS if b not in bands])
     items = fetch_items_by_id([s.id for s in scenes], collection="sentinel-2-l2a")
     for it in items:  # zero-money guard: never touch a requester-pays (s3://) file
         bad = [k for k in [*bands, "scl"] if not is_free_https(it.assets[k].href)]
@@ -110,15 +127,24 @@ def load_timeseries(
         if "spatial_ref" in raw.coords:
             coords["spatial_ref"] = raw.coords["spatial_ref"]
 
-    mask = valid_mask(scl)  # (time, y, x) bool
+    if cloud == "scl":
+        mask = valid_mask(scl)  # (time, y, x) bool
+        cloud_class = None
+    else:
+        from core.models.cloud import classes
+        cloud_class = np.stack([classes(np.stack([refl[b][t] for b in OCM_BANDS])) for t in range(scl.shape[0])])
+        mask = valid_mask(scl, FILE_FAULTS) & (cloud_class == 0)
     out = xr.Dataset(coords=coords)
-    for b in bands:
+    for b in out_bands:
         cube = refl[b].astype(np.float32)
         cube[~mask] = np.nan
         out[b] = (("time", "y", "x"), cube)
         out[b].attrs["units"] = "surface reflectance (0-1)"
     out["scl"] = (("time", "y", "x"), scl)
+    if cloud_class is not None:
+        out["cloud_class"] = (("time", "y", "x"), cloud_class)
     out["valid_fraction"] = ("time", mask.reshape(mask.shape[0], -1).mean(axis=1))
     out.attrs["scene_ids"] = [s.id for s in scenes]
     out.attrs["bbox"] = bbox.as_list()
+    out.attrs["cloud"] = cloud
     return out

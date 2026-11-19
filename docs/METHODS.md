@@ -8,9 +8,10 @@ Every learned component in this system had to beat the rule it replaces, under a
 - [3. Water in optical images](#3-water-in-optical-images)
 - [4. Water in radar images](#4-water-in-radar-images)
 - [5. The answer path, end to end](#5-the-answer-path-end-to-end)
-- [6. Comparison with published Sen1Floods11 results](#6-comparison-with-published-sen1floods11-results)
-- [7. The agent benchmark](#7-the-agent-benchmark)
-- [8. Limits](#8-limits)
+- [6. Which pixels are cloud or cloud shadow](#6-which-pixels-are-cloud-or-cloud-shadow)
+- [7. Comparison with published Sen1Floods11 results](#7-comparison-with-published-sen1floods11-results)
+- [8. The agent benchmark](#8-the-agent-benchmark)
+- [9. Limits](#9-limits)
 
 ## 1. Principle: a model replaces a rule only if it wins
 
@@ -34,6 +35,7 @@ Every learned component in this system had to beat the rule it replaces, under a
 | Sentinel-2 Level-2A (surface reflectance) | the pipeline's optical images | Element84 Earth Search, free COGs |
 | Sentinel-1 RTC (radiometrically terrain-corrected backscatter) | the pipeline's radar images | Microsoft Planetary Computer, free, no account |
 | Sen1Floods11 (Bonafilia et al. 2020) | 446 hand-labelled 512 × 512 tiles from 11 flood events, with Sentinel-1 and Sentinel-2 | public bucket `gs://sen1floods11` |
+| CloudSEN12+ (Aybar et al. 2022, 2024) | about 10 000 Sentinel-2 images (509 × 509 pixels) with expert labels: clear, thick cloud, thin cloud, cloud shadow | Hugging Face `tacofoundation/cloudsen12`, CC0 |
 
 **The domain-shift trap, and how it is avoided.** Sen1Floods11's own images are Level-1C optical (top of
 atmosphere) and Earth-Engine sigma-naught radar. The pipeline reads Level-2A optical and RTC gamma-naught
@@ -47,6 +49,9 @@ image formats**, same scene, read onto the hand label's pixel grid:
 - `core/data/sen1floods11_s1rtc.py`: Sentinel-1 RTC, 379 tiles, 10 events (Paraguay's scene is not in
   the archive). VH correlation with the original after a 9 × 9 pixel average: 0.90-0.98 per event; RTC
   is 1.1-2.1 dB brighter, as expected for gamma naught.
+- `core/data/cloudsen12_es.py`: the CloudSEN12+ test images as Earth Search Level-2A, same tile and
+  day, on the label's grid: 953 of 975 (192 places). Checked on three images: correlation with the data
+  set's own Level-2A 1.000 in the 10 m bands, and lower after a one-pixel shift.
 
 All decisions are made on these copies.
 
@@ -175,7 +180,59 @@ Gain over optical alone: **+0.167 [+0.031, +0.346]**. Radar answered 14 previous
 questions, 12 of them correctly. The pipeline's own code (`measure_change`) gives the experiment's answer on all 78 questions. The 6 India 2016 questions have no optical image at all; with radar, 2 of 6 are answered
 correctly (the 2 "no" questions; the 4 "yes" questions were answered "no").
 
-## 6. Comparison with published Sen1Floods11 results
+## 6. Which pixels are cloud or cloud shadow
+
+Every optical measurement starts by removing pixels that show cloud or cloud shadow instead of the ground.
+Until now ESA's scene classification (SCL, made by ESA's Sen2Cor processor from fixed tests on brightness
+and colour) decided: unusable where SCL is 3 (shadow), 8, 9 (cloud) or 10 (cirrus). A cloud let through
+spoils a measurement; a clear pixel thrown away can turn an answer into "cannot tell".
+
+**Test.** The 975 high-quality test images of CloudSEN12+ (195 places, 5 dates each), in the Earth Search
+copy (953 images, 192 places), the kind of image the pipeline reads. Main number: IoU of "unusable"
+(thick cloud, thin cloud and shadow together), pooled; the interval resamples whole places (10 000
+times). Candidates: OmniCloudMask (Wright et al. 2025) used exactly as published; a U-Net (ResNet-18)
+trained from scratch and TerraMind-1.0-base fine-tuned on the 8 490 training images (7 bands, 20
+epochs, 3 seeds); and a stronger SCL rule (more classes, the mask widened by k pixels) chosen on the
+validation part. Leakage checked from the catalogue: no test place is in OmniCloudMask's training
+material (nearest image 15.4 km away); the 16 test images taken on the same day and tile as one of its
+training images were also checked apart.
+
+| detector | IoU of unusable | minus SCL [95 % interval] | clouds let through | clear pixels thrown away |
+|---|---|---|---|---|
+| SCL 3/8/9/10 (the rule) | 0.644 | | 26 % | 13 % |
+| SCL 3/7/8/9/10, widened 5 px (chosen on validation) | 0.681 | +0.037 [+0.026, +0.048] | 16 % | 21 % |
+| U-Net, from scratch | 0.844 | +0.200 [+0.181, +0.220] | 11 % | 6 % |
+| TerraMind-1.0-base, fine-tuned | 0.878 | +0.234 [+0.213, +0.255] | 7 % | 6 % |
+| **OmniCloudMask, as published** | **0.885** | **+0.241 [+0.221, +0.261]** | **7 %** | **5 %** |
+
+OmniCloudMask also beats TerraMind (+0.007 [+0.001, +0.013]) and the stronger rule (+0.204); without
+the 16 same-day images, +0.243. By class (IoU, SCL → OmniCloudMask): thick cloud 0.60 → 0.86, thin
+cloud 0.20 → 0.54, shadow 0.33 → 0.67. Widening the rule's mask trades one mistake for the other; the
+networks reduce both.
+
+![clouds](figures/b3_clouds.png)
+
+*A typical test image (chosen by a fixed rule: the image whose SCL score is closest to SCL's overall
+score). On bright sand SCL calls most cloud shadow clear ground: IoU 0.64 against 0.97.*
+
+**Two versions of ESA's rule.** On the data set's own Level-2A copies of the same scenes (made earlier by
+Google Earth Engine), SCL scores only 0.541; only 263 of 953 images have identical SCL maps in both
+copies. In a random sample of 12, every differing image is one that ESA has reprocessed (processing baseline 05.00)
+on Earth Search. The networks score the same on both copies (OmniCloudMask 0.885 and 0.888).
+
+**In the pipeline.** OmniCloudMask's two networks run from ONNX files on the CPU; the library's
+procedure around them (overlapping windows, per-window scaling, blended edges, no-data handling) is
+ported to NumPy (`core/models/cloud.py`, MIT notice kept). It is identical to the library pixel for pixel
+on 7 awkward image shapes, and on the 953 test images agrees with the library's GPU result on 99.996 % of
+pixels (IoU 0.885 in both). Cost: about 0.25 s per image date for a 5 km area.
+
+**End to end.** All 150 benchmark questions with only the cloud detector changed: 0.853 → 0.860
+(+0.007 [−0.015, +0.029]); 3 answers changed (2 fixed, 1 broken). The condition was "not worse", and it
+holds. The large pixel gain hardly shows here, because few answers hinge on a few percent of pixels. On
+Sen1Floods11's labelled flood water, OmniCloudMask marks 22 % as unusable against 24 % for SCL, so it
+does not mistake dark flood water for shadow.
+
+## 7. Comparison with published Sen1Floods11 results
 
 Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
 optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
@@ -206,7 +263,7 @@ flood never seen, in the pipeline's own image formats), not from weak training. 
 optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
 keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
-## 7. The agent benchmark
+## 8. The agent benchmark
 
 `eval/benchmark.jsonl` (44 questions) and `eval/benchmark_v2.jsonl` (150): flood questions from
 Sen1Floods11 labels, construction and wildfire sites with verified dates, stable control sites, and
@@ -226,7 +283,7 @@ The final design follows from this: Claude holds the conversation, **all measure
 deterministic function** (`measure_change`), and two checks in code verify that the reply's answer and
 every number in it come from that function's results.
 
-## 8. Limits
+## 9. Limits
 
 - 10 flood events give wide intervals; the radar U-Net's gain is not significant (interval touches 0).
 - One seed per model in the optical comparison; three in the radar comparison.
@@ -234,3 +291,5 @@ every number in it come from that function's results.
 - The benchmark's flood questions come from the same 10-11 events as the training data (each question is
   answered by a model that never saw its event, but they are not new places).
 - Radar answers have no evidence figure yet.
+- Thin cloud stays hard for every cloud detector (IoU 0.54 at best). The cloud U-Net was trained for a
+  fixed 20 epochs and may be undertrained.

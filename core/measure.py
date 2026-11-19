@@ -33,6 +33,12 @@ FLOOD_WATER_DETECTOR = "unet"
 # without an answer, radar answers it. On the exam's 72 flood questions outside India this raised the
 # accuracy from 0.722 to 0.889 (+0.167, interval +0.031..+0.346). Radar water: TerraMind (core.models.water).
 MIN_RADAR_USABLE = 0.5
+# Which pixels are cloud or shadow (core/data/timeseries.py). Milestone B3 (18 November 2026): OmniCloudMask
+# beat ESA's scene classification (SCL) on 953 expert-labelled test images (IoU of "unusable" 0.885 against
+# 0.644, +0.241, interval +0.221..+0.261), and on exam v2 the answers did not become worse (150 questions:
+# 0.853 -> 0.860, +0.007, interval -0.015..+0.029). The lower-level functions (core.tools) keep "scl" as
+# their default, so earlier recorded results still describe the code.
+CLOUD_DETECTOR = "ocm"
 
 Kind = Literal["flood", "construction", "vegetation_loss"]
 
@@ -72,6 +78,7 @@ class MeasureResult(BaseModel):
     measurement: dict | None = Field(description="all numbers from detect_change")
     figure: str | None = Field(description="path of the evidence figure (PNG)")
     water_detector: str | None = Field(None, description="how water pixels were found (flood questions)")
+    cloud_detector: str | None = Field(None, description="how cloud and shadow pixels were found (optical images)")
     sensor: str | None = Field(None, description="'optical' (Sentinel-2) or 'radar' (Sentinel-1, used for floods "
                                                  "when clouds hide the ground)")
     n_radar_days_before: int | None = None
@@ -135,10 +142,13 @@ def radar_answer(out: dict, steps: list[str], bbox: list[float], periods, fold: 
                                 radar_days_before=rb.days, radar_days_after=ra.days))
 
 
-def measure_change(water: str | None = None, radar: str | None = "ALL", **kwargs) -> MeasureResult:
+def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: str | None = None,
+                   **kwargs) -> MeasureResult:
     """Measure one change at one place. `water` overrides the flood water detector (for tests only:
     'ndwi', or 'unet-without-<event>' for a question about a Sen1Floods11 event). `radar` is the radar
-    model for floods under cloud: 'ALL' (default), '<event>' (that event left out; tests only), or None (off)."""
+    model for floods under cloud: 'ALL' (default), '<event>' (that event left out; tests only), or None (off).
+    `cloud` overrides the cloud detector ('scl' or 'ocm'; default CLOUD_DETECTOR)."""
+    cloud = cloud or CLOUD_DETECTOR
     x = MeasureInput(**kwargs)
     water = (water or FLOOD_WATER_DETECTOR) if x.kind == "flood" else "ndwi"
     bands = BANDS7 if water != "ndwi" else tools.DEFAULT_BANDS
@@ -147,7 +157,8 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", **kwargs
     out = dict(answer="cannot_tell", kind=x.kind, rule=None, reason=None, retried=False,
                before_period=None, after_period=None, n_images_before=None, n_clear_images_before=None,
                n_images_after=None, n_clear_images_after=None, measurement=None, figure=None, steps=steps,
-               water_detector=WATER_NAMES.get(water, water) if x.kind == "flood" else None)
+               water_detector=WATER_NAMES.get(water, water) if x.kind == "flood" else None,
+               cloud_detector={"scl": "ESA scene classification (SCL)", "ocm": "OmniCloudMask (milestone B3)"}[cloud])
 
     # The one retry with wider periods is allowed only when the periods came from an event date.
     may_widen = x.event_date is not None and not (x.before_start or x.before_end or x.after_start or x.after_end)
@@ -177,8 +188,8 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", **kwargs
             steps.append("dates checked: before Sentinel-2 -> cannot tell")
             return MeasureResult(**out)
 
-        b = tools.cloud_mask_and_stack(start=b0, end=b1, bands=bands, **area)
-        a = tools.cloud_mask_and_stack(start=a0, end=a1, bands=bands, **area)
+        b = tools.cloud_mask_and_stack(start=b0, end=b1, bands=bands, cloud=cloud, **area)
+        a = tools.cloud_mask_and_stack(start=a0, end=a1, bands=bands, cloud=cloud, **area)
         out.update(n_images_before=b.n_dates, n_clear_images_before=b.n_usable_dates,
                    n_images_after=a.n_dates, n_clear_images_after=a.n_usable_dates)
         steps.append(f"images: before {b0}..{b1}: {b.n_dates} ({b.n_usable_dates} clear); "

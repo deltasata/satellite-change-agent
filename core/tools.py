@@ -130,15 +130,17 @@ def _load_cube(cube_id: str) -> xr.Dataset:
 
 
 def cloud_mask_and_stack(lat: float, lon: float, start: date, end: date, size_km: float = 5.0,
-                         bands: tuple[str, ...] = DEFAULT_BANDS) -> StackOutput:
+                         bands: tuple[str, ...] = DEFAULT_BANDS, cloud: str = "scl") -> StackOutput:
     """Download, calibrate and cloud-mask all imagery of the area in [start, end] (max 120 days).
-    `bands` is not offered to agents through MCP; measure_change asks for 7 bands for flood questions
-    (the trained water detector of B1 reads B8A and B12 too)."""
+    `bands` and `cloud` are not offered to agents through MCP; measure_change asks for 7 bands for flood
+    questions (the trained water detector of B1 reads B8A and B12 too) and chooses the cloud detector
+    ("scl": ESA's classification; "ocm": OmniCloudMask, milestone B3)."""
     area = Area(lat=lat, lon=lon, size_km=size_km)
     _check_window(start, end)
     bbox = area.bbox()
     # the default bands keep their old cube ids, so earlier stored cubes are still found
-    cube_id = _hash("cube", bbox.as_list(), start, end, *([] if tuple(bands) == DEFAULT_BANDS else [bands]))
+    cube_id = _hash("cube", bbox.as_list(), start, end, *([] if tuple(bands) == DEFAULT_BANDS else [bands]),
+                    *([] if cloud == "scl" else [cloud]))
     p = _cube_path(cube_id)
     if p.exists():
         ds = xr.load_dataset(p, engine="h5netcdf")
@@ -147,7 +149,7 @@ def cloud_mask_and_stack(lat: float, lon: float, start: date, end: date, size_km
         if not scenes:
             return StackOutput(cube_id=None, area_bbox=bbox.as_list(), start=start, end=end, n_dates=0,
                                n_usable_dates=0, usable_dates=[], clear_fraction_per_month={})
-        ds = load_timeseries(scenes, bbox, bands=tuple(bands))
+        ds = load_timeseries(scenes, bbox, bands=tuple(bands), cloud=cloud)
         crs = f"EPSG:{ds.odc.crs.epsg}"
         ds = ds.drop_vars([v for v in ds.coords if v not in ("time", "x", "y")], errors="ignore")
         ds.attrs = {"bbox": bbox.as_list(), "crs": crs, "n_scenes": len(scenes)}

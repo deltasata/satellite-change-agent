@@ -5,8 +5,8 @@
 change, and answers yes / no / cannot tell, with the numbers and an evidence figure.**
 
 Every learned model in the answer path had to **beat the rule it replaces**, under a protocol fixed
-**before any score was computed**, on **flood events it had never seen**, with intervals from a
-cluster bootstrap over events.
+**before any score was computed**, on **flood events or places it had never seen**, with intervals
+from a cluster bootstrap over events or places.
 
 ![results](docs/figures/results.png)
 
@@ -15,6 +15,10 @@ cluster bootstrap over events.
 | which pixels are water, optical (Sentinel-2) | NDWI > 0: 0.690 IoU | **U-Net: 0.833** | +0.143 [+0.083, +0.219] |
 | which pixels are water, radar (Sentinel-1, sees through cloud) | VH < t: 0.477 IoU | **TerraMind-1.0, fine-tuned: 0.611** | +0.134 [+0.090, +0.192] |
 | flood questions answered correctly (72), end to end | optical images only: 0.722 | **optical U-Net + radar TerraMind when cloudy: 0.889** | +0.167 [+0.031, +0.346] |
+| which pixels are cloud or cloud shadow (953 expert-labelled images) | ESA scene classification: 0.644 IoU | **OmniCloudMask, used as published: 0.885** | +0.241 [+0.221, +0.261] |
+
+With the new cloud mask, the whole benchmark (150 questions) went from 0.853 to 0.860 (+0.007
+[−0.015, +0.029]): not worse, which was the condition for adopting it.
 
 ## What it does
 
@@ -45,7 +49,7 @@ flowchart LR
     P[person] --> S{off-topic check<br/>local Qwen3}
     S -->|on topic| C[Claude<br/>holds the conversation]
     C -->|MCP| M[measure_change<br/>deterministic code]
-    M --> O[Sentinel-2 L2A<br/>cloud mask, median composites]
+    M --> O[Sentinel-2 L2A<br/>OmniCloudMask, median composites]
     O --> U[U-Net: water pixels]
     M -->|optical cannot tell:<br/>clouds| R[Sentinel-1 RTC radar]
     R --> T[TerraMind: water pixels]
@@ -87,7 +91,12 @@ flowchart LR
    Sen1Floods11's official test split: radar TerraMind 0.672 water IoU (published 0.680), optical U-Net
    0.830 (published TerraMind 0.823), radar + optical U-Net mIoU 0.911 (published U-Net 0.914), all
    within the seed-to-seed spread. The lower numbers above come from the harder, operational test.
-7. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
+7. **Sometimes the best model is someone else's.** For clouds, the published OmniCloudMask, used
+   unchanged, beat ESA's scene classification by +0.241 IoU and also beat our own fine-tuned TerraMind
+   (0.878) and U-Net (0.844). ESA's rule improves a lot with ESA's reprocessing: it scores 0.644 on
+   Earth Search's (mostly reprocessed) images but 0.541 on older copies of the same scenes, still far
+   below the networks. On bright desert it calls most cloud shadow clear ground.
+8. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
    arithmetic from the LLM into code raised a local 8B model from 0.48 to 0.66 on the benchmark.
 
 Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
@@ -99,8 +108,8 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 | optical water: U-Net replaces NDWI | done |
 | radar water for cloudy floods: TerraMind | done |
 | comparison with published Sen1Floods11 numbers (official split) | done: on par (within 0.01) |
-| cloud mask: learned (OmniCloudMask) vs ESA scene classification | next |
-| construction: Siamese change network vs change-vector rule (OSCD) | planned |
+| cloud mask: OmniCloudMask replaces ESA scene classification | done |
+| construction: Siamese change networks vs change-vector rule (OSCD, located and re-read as Level-2A) | next: protocol fixed |
 | burn scars: segmentation model vs rule | planned |
 | a model that reads every clear date of the time series, not two composites | planned |
 
@@ -108,10 +117,10 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 
 ```text
 core/            satellite data access (STAC, COGs), cloud mask, time-series cube, measure_change
-core/models/     water detectors (U-Net, TerraMind via ONNX), change detectors
+core/models/     water detectors (U-Net, TerraMind), cloud detector (OmniCloudMask), all via ONNX; change detectors
 mcp_server/      MCP servers: measure_change, and the four step functions
 agents/          the chat agent (Claude Agent SDK), LangGraph workflow, model back ends
-experiments/     b1_* optical water, b2_* radar water: data copies, training, reports, exports
+experiments/     b1_* optical water, b2_* radar water, b3_* clouds: data copies, training, reports, exports
 eval/            the benchmarks (44 and 150 questions), reference pipeline, metrics
 examples/        chat.py: a conversation with the agent
 tests/           unit and integration tests
@@ -129,6 +138,7 @@ python -m pytest -q -m "not network"
 # the trained networks are not stored in the repository yet (a download will follow); until then,
 # train them as below and export them to ONNX:
 .venv-ml/bin/python -m experiments.b1_export && .venv-ml/bin/python -m experiments.b2_export
+.venv-ml/bin/python -m experiments.b3_export      # OmniCloudMask's published weights -> ONNX
 
 # answer one question with fixed code (no language model)
 python -c "from core.measure import measure_change as m; \
@@ -139,7 +149,7 @@ scripts/serve_llm.sh Qwen/Qwen3-8B 0 8101
 python examples/chat.py --chat
 ```
 
-Reproducing the results (about 4 hours on four 24 GB GPUs):
+Reproducing the results (water: about 4 hours on four 24 GB GPUs; clouds: about 3 hours more):
 
 ```bash
 python -m core.data.sen1floods11 && python -m core.data.sen1floods11_l2a && python -m core.data.sen1floods11_s1rtc
@@ -152,6 +162,12 @@ python -m experiments.b1_report                       # optical table
 # the networks the agent uses for new places (trained on every flood event), then export to ONNX:
 .venv-ml/bin/python -m experiments.b1_train --model unet --event ALL
 .venv-ml/bin/python -m experiments.b2_train --plan A-all --gpus 0,1,2
+# clouds (CloudSEN12+: download the 9 needed files, 153 GB, into data_cache/cloudsen12/taco/ first)
+.venv-ml/bin/python -m core.data.cloudsen12 && python -m core.data.cloudsen12_es
+python -m experiments.b3_rules && .venv-ml/bin/python -m experiments.b3_ocm
+.venv-ml/bin/python -m experiments.b3_train --all --gpus 0,1,2 && python -m experiments.b3_report A
+.venv-ml/bin/python -m experiments.b3_export && .venv-ml/bin/python -m experiments.b3_check
+python -m experiments.b3_exam run scl && python -m experiments.b3_exam run ocm && python -m experiments.b3_exam report
 ```
 
 ## Data, models and licences
@@ -161,6 +177,8 @@ python -m experiments.b1_report                       # optical table
 | Sentinel-2 L2A | Copernicus, via [Element84 Earth Search](https://earth-search.aws.element84.com/v1) | free and open Copernicus data; provider terms apply |
 | Sentinel-1 RTC | Copernicus, via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/sentinel-1-rtc) | free and open Copernicus data; provider terms apply |
 | Sen1Floods11 | Bonafilia et al. 2020, `gs://sen1floods11` | CC BY 4.0 |
+| CloudSEN12+ | Aybar et al. 2022, 2024, Hugging Face `tacofoundation/cloudsen12` | CC0 |
+| OmniCloudMask | Wright et al. 2025, `pip install omnicloudmask` (version 1.8.1, model version 4) | MIT |
 | Prithvi-EO-2.0 | NASA / IBM, Hugging Face `ibm-nasa-geospatial` | Apache-2.0 |
 | TerraMind-1.0 | IBM / ESA, Hugging Face `ibm-esa-geospatial` | Apache-2.0 |
 | Qwen3 | Alibaba, Hugging Face `Qwen` | Apache-2.0 |
@@ -173,4 +191,7 @@ Code: Apache-2.0 (see `LICENSE`). Model weights and data are downloaded by scrip
   algorithms for Sentinel-1*, CVPR Workshops 2020.
 - Szwarcman et al., *Prithvi-EO-2.0: a versatile multi-temporal foundation model for Earth observation*, arXiv 2412.02732, 2024.
 - Jakubik et al., *TerraMind: large-scale generative multimodality for Earth observation*, arXiv 2504.11171, 2025.
+- Aybar et al., *CloudSEN12, a global dataset for semantic understanding of cloud and cloud shadow in
+  Sentinel-2*, Scientific Data 2022.
+- Wright et al., *OmniCloudMask*, Remote Sensing of Environment, 2025.
 - Marsocci et al., *PANGAEA: a global and inclusive benchmark for geospatial foundation models*, arXiv 2412.04204, 2024.

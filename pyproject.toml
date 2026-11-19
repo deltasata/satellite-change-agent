@@ -32,7 +32,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 # training only (milestone B1), installed in the separate environment .venv-ml:
-ml = ["torch>=2.10", "terratorch", "segmentation-models-pytorch", "onnx", "onnxruntime"]
+ml = ["torch>=2.10", "terratorch", "segmentation-models-pytorch", "onnx", "onnxruntime",
+      "omnicloudmask==1.8.1", "tacoreader<1.0", "aiohttp", "requests"]
 
 [tool.setuptools.packages.find]
 include = ["core*", "mcp_server*", "agents*", "eval*"]

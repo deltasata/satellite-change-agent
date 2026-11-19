@@ -19,6 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from core import tools
+from core.models.change import NAMES as CHANGE_NAMES
 from core.models.water import BANDS7, NAMES as WATER_NAMES, RADAR_NAME
 
 # The decision rules, frozen on 2026-11-13 and shared with every agent variant.
@@ -39,6 +40,13 @@ MIN_RADAR_USABLE = 0.5
 # 0.853 -> 0.860, +0.007, interval -0.015..+0.029). The lower-level functions (core.tools) keep "scl" as
 # their default, so earlier recorded results still describe the code.
 CLOUD_DETECTOR = "ocm"
+# Which pixels changed, for construction questions. Milestone B4 (19 November 2026), protocol in
+# docs/METHODS.md section 7: a Siamese TerraMind, fine-tuned on OSCD's urban-change labels, beat the rule
+# (change larger than 4 times the before images' date-to-date scatter) on 24 cities left out one group at a
+# time (IoU of "changed" 0.301 against 0.188, +0.114, interval +0.052..+0.180). On exam v2 the answers did not become worse
+# (0.860 -> 0.860), and on the 78 flood questions asked as construction questions it gave 21 false "yes"
+# instead of 25 (interval of the difference includes zero). "Vegetation loss" keeps the rule.
+CHANGE_DETECTOR = "terramind"
 
 Kind = Literal["flood", "construction", "vegetation_loss"]
 
@@ -79,6 +87,7 @@ class MeasureResult(BaseModel):
     figure: str | None = Field(description="path of the evidence figure (PNG)")
     water_detector: str | None = Field(None, description="how water pixels were found (flood questions)")
     cloud_detector: str | None = Field(None, description="how cloud and shadow pixels were found (optical images)")
+    change_detector: str | None = Field(None, description="how changed pixels were found (construction questions)")
     sensor: str | None = Field(None, description="'optical' (Sentinel-2) or 'radar' (Sentinel-1, used for floods "
                                                  "when clouds hide the ground)")
     n_radar_days_before: int | None = None
@@ -143,21 +152,25 @@ def radar_answer(out: dict, steps: list[str], bbox: list[float], periods, fold: 
 
 
 def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: str | None = None,
-                   **kwargs) -> MeasureResult:
+                   change: str | None = None, **kwargs) -> MeasureResult:
     """Measure one change at one place. `water` overrides the flood water detector (for tests only:
     'ndwi', or 'unet-without-<event>' for a question about a Sen1Floods11 event). `radar` is the radar
     model for floods under cloud: 'ALL' (default), '<event>' (that event left out; tests only), or None (off).
-    `cloud` overrides the cloud detector ('scl' or 'ocm'; default CLOUD_DETECTOR)."""
+    `cloud` overrides the cloud detector ('scl' or 'ocm'; default CLOUD_DETECTOR). `change` overrides the
+    change detector of construction questions ('rule', 'fsd', 'terramind', or '<model>-without-<group>' for
+    a place inside an OSCD city; default CHANGE_DETECTOR)."""
     cloud = cloud or CLOUD_DETECTOR
     x = MeasureInput(**kwargs)
     water = (water or FLOOD_WATER_DETECTOR) if x.kind == "flood" else "ndwi"
-    bands = BANDS7 if water != "ndwi" else tools.DEFAULT_BANDS
+    change = (change or CHANGE_DETECTOR) if x.kind == "construction" else "rule"
+    bands = BANDS7 if (water != "ndwi" or change != "rule") else tools.DEFAULT_BANDS
     area = dict(lat=x.lat, lon=x.lon, size_km=x.size_km)
     steps: list[str] = []
     out = dict(answer="cannot_tell", kind=x.kind, rule=None, reason=None, retried=False,
                before_period=None, after_period=None, n_images_before=None, n_clear_images_before=None,
                n_images_after=None, n_clear_images_after=None, measurement=None, figure=None, steps=steps,
                water_detector=WATER_NAMES.get(water, water) if x.kind == "flood" else None,
+               change_detector=CHANGE_NAMES.get(change.split("-without-")[0], change) if x.kind == "construction" else None,
                cloud_detector={"scl": "ESA scene classification (SCL)", "ocm": "OmniCloudMask (milestone B3)"}[cloud])
 
     # The one retry with wider periods is allowed only when the periods came from an event date.
@@ -198,7 +211,7 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
             out["reason"] = "no images exist for this place in at least one period (for example open sea)"
             break
 
-        c = tools.detect_change(b.cube_id, a.cube_id, water=water)
+        c = tools.detect_change(b.cube_id, a.cube_id, water=water, change=change)
         out["measurement"] = c.model_dump(mode="json", exclude={"result_id", "before_window", "after_window"})
         ans, rule = decide(x.kind, c)
         steps.append(f"measured: status {c.status}; rule: {rule} -> {ans}")

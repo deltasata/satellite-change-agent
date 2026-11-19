@@ -1,6 +1,7 @@
 """Draw docs/figures/results.png: every learned model against the rule it had to beat.
 
-The numbers are the measured results (runs/b1/report.json, runs/b2/report_A.json, runs/b2/report_C.json);
+The numbers are the measured results (runs/b1/report.json, runs/b2/report_A.json, runs/b2/report_C.json,
+runs/b3/report_A.json, runs/b4/report_A.json);
 they are written here so that the figure can be redrawn without the 10 GB of intermediate files.
 
     python scripts/make_figures.py
@@ -39,13 +40,28 @@ PANELS = [
         ("optical U-Net + radar rule", 0.875, "model"),
         ("optical U-Net + radar TerraMind", 0.889, "adopted"),
     ], "+0.167 [+0.031, +0.346]\nover optical U-Net"),
+    ("Which pixels are cloud or shadow\nIoU of unusable, 953 expert-labelled images", [
+        ("ESA scene classification", 0.644, "rule"),
+        ("same, more classes, widened", 0.681, "rule"),
+        ("U-Net, trained from scratch", 0.844, "model"),
+        ("TerraMind-1.0-base, fine-tuned", 0.878, "model"),
+        ("OmniCloudMask, as published", 0.885, "adopted"),
+    ], "+0.241 [+0.221, +0.261]\nover ESA's classification"),
+    ("Which pixels changed through construction\nIoU of changed, 24 OSCD cities, groups held out", [
+        ("change / scatter > 4", 0.188, "rule"),
+        ("same, threshold fitted", 0.188, "rule"),
+        ("FC-Siam-diff, from scratch", 0.225, "model"),
+        ("TerraMind-1.0-base, Siamese", 0.301, "adopted"),
+    ], "+0.114 [+0.052, +0.180]\nover the rule"),
 ]
 
 
 def main() -> None:
     plt.rcParams.update({"font.size": 10, "text.color": INK, "axes.labelcolor": MUTED,
                          "xtick.color": MUTED, "ytick.color": INK, "font.family": "DejaVu Sans"})
-    fig, axes = plt.subplots(1, 3, figsize=(18, 4.9), facecolor=SURFACE)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 9.6), facecolor=SURFACE)
+    axes = axes.ravel()
+    axes[-1].axis("off")
     for ax, (title, rows, note) in zip(axes, PANELS):
         ax.set_facecolor(SURFACE)
         names = [r[0] for r in rows]
@@ -71,9 +87,9 @@ def main() -> None:
     handles = [plt.Rectangle((0, 0), 1, 1, color=RULE), plt.Rectangle((0, 0), 1, 1, color=MODEL)]
     fig.legend(handles, ["rule (threshold)", "learned model"], loc="lower center", ncol=2, frameon=False,
                bbox_to_anchor=(0.5, -0.02))
-    fig.text(0.01, -0.02, "Interval: 95 %, resampling whole flood events. Protocols fixed before any score: "
+    fig.text(0.01, -0.02, "Interval: 95 %, resampling whole flood events, places or groups of cities. Protocols fixed before any score: "
              "docs/METHODS.md", fontsize=8.5, color=MUTED)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.tight_layout(rect=(0, 0.02, 1, 1))
     OUT.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT, dpi=110, facecolor=SURFACE, bbox_inches="tight")
     print(OUT)

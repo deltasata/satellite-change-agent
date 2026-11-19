@@ -131,6 +131,7 @@ def detect_change_timeseries(
     noise_floor: float = 0.02,
     min_valid_pixels: float = 0.5,
     water: str = "ndwi",
+    change: str = "rule",
 ) -> dict:
     """Compare two time windows of a masked cube.
 
@@ -187,6 +188,17 @@ def detect_change_timeseries(
     score = ndimage.median_filter(np.nan_to_num(score, nan=0.0), size=3)
     score = np.where(usable, score, np.nan)
     changed = np.nan_to_num(score, nan=0.0) > z_threshold
+    if change != "rule":  # a trained network on the two 7-band median images (milestone B4, core/models/change.py)
+        from core.models.change import changed as network_changed
+        from core.models.water import BANDS7
+        missing = [k for k in BANDS7 if k not in ds]
+        if missing:
+            raise ValueError(f"change detector {change!r} needs bands {missing}; stack the cube with bands=BANDS7")
+        with np.errstate(all="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            mb = np.stack([np.nanmedian(wb[k].values, axis=0) for k in BANDS7])
+            ma = np.stack([np.nanmedian(wa[k].values, axis=0) for k in BANDS7])
+        changed = network_changed(mb, ma, change) & usable
 
     ib = spectral_indices(*(comp[k][0] for k in ("red", "green", "nir", "swir16")))
     ia = spectral_indices(*(comp[k][1] for k in ("red", "green", "nir", "swir16")))

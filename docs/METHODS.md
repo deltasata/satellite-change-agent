@@ -9,9 +9,10 @@ Every learned component in this system had to beat the rule it replaces, under a
 - [4. Water in radar images](#4-water-in-radar-images)
 - [5. The answer path, end to end](#5-the-answer-path-end-to-end)
 - [6. Which pixels are cloud or cloud shadow](#6-which-pixels-are-cloud-or-cloud-shadow)
-- [7. Comparison with published Sen1Floods11 results](#7-comparison-with-published-sen1floods11-results)
-- [8. The agent benchmark](#8-the-agent-benchmark)
-- [9. Limits](#9-limits)
+- [7. Which pixels changed through construction](#7-which-pixels-changed-through-construction)
+- [8. Comparison with published Sen1Floods11 results](#8-comparison-with-published-sen1floods11-results)
+- [9. The agent benchmark](#9-the-agent-benchmark)
+- [10. Limits](#10-limits)
 
 ## 1. Principle: a model replaces a rule only if it wins
 
@@ -35,6 +36,7 @@ Every learned component in this system had to beat the rule it replaces, under a
 | Sentinel-2 Level-2A (surface reflectance) | the pipeline's optical images | Element84 Earth Search, free COGs |
 | Sentinel-1 RTC (radiometrically terrain-corrected backscatter) | the pipeline's radar images | Microsoft Planetary Computer, free, no account |
 | Sen1Floods11 (Bonafilia et al. 2020) | 446 hand-labelled 512 × 512 tiles from 11 flood events, with Sentinel-1 and Sentinel-2 | public bucket `gs://sen1floods11` |
+| OSCD (Daudt et al. 2018), original files | 24 cities, two dates each (2015-2018), hand-drawn maps of urban change; the band files keep their map position | authors' site (link in the code), labels CC BY-NC-SA, not redistributed here |
 | CloudSEN12+ (Aybar et al. 2022, 2024) | about 10 000 Sentinel-2 images (509 × 509 pixels) with expert labels: clear, thick cloud, thin cloud, cloud shadow | Hugging Face `tacofoundation/cloudsen12`, CC0 |
 
 **The domain-shift trap, and how it is avoided.** Sen1Floods11's own images are Level-1C optical (top of
@@ -49,6 +51,9 @@ image formats**, same scene, read onto the hand label's pixel grid:
 - `core/data/sen1floods11_s1rtc.py`: Sentinel-1 RTC, 379 tiles, 10 events (Paraguay's scene is not in
   the archive). VH correlation with the original after a 9 × 9 pixel average: 0.90-0.98 per event; RTC
   is 1.1-2.1 dB brighter, as expected for gamma naught.
+- `core/data/oscd_pc.py`: every Planetary Computer Level-2A image within ± 60 days of each OSCD label
+  date, on the label's grid, cloud-masked: all 24 cities. Red band against OSCD's own: correlation
+  0.97-0.99, lower after a one-pixel shift.
 - `core/data/cloudsen12_es.py`: the CloudSEN12+ test images as Earth Search Level-2A, same tile and
   day, on the label's grid: 953 of 975 (192 places). Checked on three images: correlation with the data
   set's own Level-2A 1.000 in the 10 m bands, and lower after a one-pixel shift.
@@ -232,7 +237,67 @@ holds. The large pixel gain hardly shows here, because few answers hinge on a fe
 Sen1Floods11's labelled flood water, OmniCloudMask marks 22 % as unusable against 24 % for SCL, so it
 does not mistake dark flood water for shadow.
 
-## 7. Comparison with published Sen1Floods11 results
+## 7. Which pixels changed through construction
+
+For a construction question the pipeline makes two median images (per pixel and band, the median of the
+clear observations before, and after). The rule it used: per band, the change of the median divided by
+the before images' date-to-date scatter (1.4826 × median absolute deviation, at least 0.02); "changed"
+where the root mean square of this ratio over 5 bands is above 4; "yes" if at least 3 % of the area
+changed. It is a signal-to-noise cut, and it flags *every* change: a harvest, a flood or a dry summer
+lawn passes it as easily as a new building. Asked "was there new construction between summer 2022 and
+summer 2023?" about farmland flooded in May 2023 (Conselice, Italy), it answered "yes".
+
+**Data: OSCD put back on the map.** OSCD (Daudt et al. 2018) has hand-drawn maps of **urban change only**
+for 24 cities, two dates each (2015 to 2018). A flood or a harvest is "no change" in it, which is exactly
+what a construction question needs. Common copies of OSCD have lost the images' map position; the
+authors' original files keep it (each city's band files are GeoTIFFs on a 10 m latitude-longitude grid,
+and the label is drawn on that grid). So every Level-2A image within ± 60 days of each label date was read
+from **Planetary Computer** onto the label's grid (Earth Search lacks most 2015-2016 images), cloud-masked
+with OmniCloudMask, and turned into the pipeline's two median images (one city, Rio, needed ± 90 days).
+Alignment check before any score: correlation of the red band with OSCD's own 0.97-0.99, and 0.84-0.94
+after a one-pixel shift.
+
+**Test.** Two pairs of cities are neighbours (Saclay east and west; Paris and Bercy), so there are **22
+independent groups**. Each group is mapped by networks trained on the other 21 (**leave one group out**).
+Scored pixels: those with at least 2 clear observations before and 1 after, the same for every detector.
+Main number: IoU of "changed", pooled; the interval resamples the 22 groups (10 000 times). Candidates:
+the rule with its threshold refitted on the training groups (from 2, 3, 4, 5, 6, 8), an honest baseline;
+**FC-Siam-diff** (Daudt, Le Saux, Boulch 2018; 1.4 M parameters) trained from scratch; and **TerraMind-1.0-base
+as a Siamese network**: the same pretrained encoder on the before and on the after image, the difference
+of their features to a UperNet decoder (TerraTorch's `TemporalWrapper`), fine-tuned (98 M parameters).
+Both networks: 7 bands, 224 × 224 crops, 3 000 steps, cross-entropy + Dice loss, no early stopping, 3
+seeds, mean of the 3 seeds' probabilities > 0.5. 138 training runs in all.
+
+| detector | IoU | F1 | precision | recall | minus the rule [95 % interval] |
+|---|---|---|---|---|---|
+| the rule (ratio > 4) | 0.188 | 0.316 | 0.406 | 0.258 | |
+| the rule, threshold refitted | 0.188 | 0.316 | 0.406 | 0.258 | +0.000 |
+| FC-Siam-diff, from scratch | 0.225 | 0.368 | 0.682 | 0.252 | +0.038 [−0.012, +0.094] |
+| **TerraMind-1.0-base, Siamese, fine-tuned** | **0.301** | **0.463** | **0.587** | **0.383** | **+0.114 [+0.052, +0.180]** |
+
+The refitted rule chose 4 in all 22 folds: the rule was already at its best, and the network wins by
+doing something the rule cannot. TerraMind is better in 21 of 24 cities; its single seeds give 0.294,
+0.304 and 0.281. The small network trained from scratch becomes purer than the rule but finds no more
+change; the pretrained encoder gains on both. (Published OSCD numbers use one Level-1C image per date,
+13 bands and the 10 official test cities, e.g. FC-Siam-diff F1 0.58; ours are median images of several
+dates, 7 Level-2A bands, all 24 cities left out by group. Not the same experiment.)
+
+![construction](figures/b4_construction.png)
+
+*Dubai (chosen by a fixed rule: the city whose rule IoU is closest to the rule's overall 0.19). White:
+changed in both map and label; red: false alarm; blue: missed. TerraMind's map comes from networks that
+never saw Dubai.*
+
+**End to end.** All 150 benchmark questions with only the change detector changed: 0.860 → 0.860; 2
+answers changed (a chip factory under construction fixed, a stable park broken). Not worse, the
+condition. **False alarms:** the 78 flood questions of the benchmark asked as "was there new
+construction?" (right answer always "no"): false "yes" 25 with the rule, 21 with TerraMind (difference
+−0.051 [−0.191, +0.048] over 11 flood events; the condition was "not more"); the median area marked
+changed falls from 7.5 % to 2.1 %. Conselice: the rule "yes" (4.5 % changed), TerraMind "no" (1.0 %).
+So TerraMind now draws the change map for construction questions, from ONNX files on the CPU (3 seeds,
+each trained on all 24 cities; about 1.5 minutes per question on a CPU, against about 10 s for the rule).
+
+## 8. Comparison with published Sen1Floods11 results
 
 Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
 optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
@@ -263,7 +328,7 @@ flood never seen, in the pipeline's own image formats), not from weak training. 
 optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
 keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
-## 8. The agent benchmark
+## 9. The agent benchmark
 
 `eval/benchmark.jsonl` (44 questions) and `eval/benchmark_v2.jsonl` (150): flood questions from
 Sen1Floods11 labels, construction and wildfire sites with verified dates, stable control sites, and
@@ -283,7 +348,7 @@ The final design follows from this: Claude holds the conversation, **all measure
 deterministic function** (`measure_change`), and two checks in code verify that the reply's answer and
 every number in it come from that function's results.
 
-## 9. Limits
+## 10. Limits
 
 - 10 flood events give wide intervals; the radar U-Net's gain is not significant (interval touches 0).
 - One seed per model in the optical comparison; three in the radar comparison.
@@ -293,3 +358,9 @@ every number in it come from that function's results.
 - Radar answers have no evidence figure yet.
 - Thin cloud stays hard for every cloud detector (IoU 0.54 at best). The cloud U-Net was trained for a
   fixed 20 epochs and may be undertrained.
+- OSCD has 24 cities and only urban change: the change network has never been shown a flood labelled "no
+  change", and still answers a false "yes" on 21 of 78 flooded areas asked about construction.
+- The change network is trained on Planetary Computer's Level-2A images and used on Earth Search's. The
+  end-to-end tests ran on Earth Search and did not get worse, but there are no pixel labels there.
+- The benchmark could gain at most one construction answer (the rule already got 44 of 45); the change
+  network's gain is shown at pixel level, not in the benchmark.

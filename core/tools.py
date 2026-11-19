@@ -210,7 +210,7 @@ def _combined(before_id: str, after_id: str):
     return ds, win_b, win_a
 
 
-def detect_change(before_cube_id: str, after_cube_id: str, water: str = "ndwi") -> ChangeOutput:
+def detect_change(before_cube_id: str, after_cube_id: str, water: str = "ndwi", change: str = "rule") -> ChangeOutput:
     """Compare a 'before' cube with an 'after' cube of the same area.
 
     Interpretation guide (measured on test cases):
@@ -230,11 +230,13 @@ def detect_change(before_cube_id: str, after_cube_id: str, water: str = "ndwi") 
     """
     # water: the water detector (core/models/water.py). Not offered to agents through MCP; the default
     # NDWI > 0 keeps the old result ids; measure_change uses the U-Net of milestone B1 for floods.
-    rid = _hash("result", before_cube_id, after_cube_id, *([] if water == "ndwi" else [water]))
+    # change: which pixels changed (core/models/change.py, milestone B4); the default "rule" keeps the old ids.
+    rid = _hash("result", before_cube_id, after_cube_id, *([] if water == "ndwi" else [water]),
+                *([] if change == "rule" else [f"change={change}"]))
     if _result_path(rid).exists():
         return ChangeOutput.model_validate_json(_result_path(rid).read_text())
     ds, wb, wa = _combined(before_cube_id, after_cube_id)
-    r = detect_change_timeseries(ds, wb, wa, water=water)
+    r = detect_change_timeseries(ds, wb, wa, water=water, change=change)
     px_km2 = abs(float(ds.x[1] - ds.x[0]) * float(ds.y[1] - ds.y[0])) / 1e6
     out = ChangeOutput(
         result_id=rid, status=r["status"], reason=r.get("reason"),
@@ -251,7 +253,7 @@ def detect_change(before_cube_id: str, after_cube_id: str, water: str = "ndwi") 
             delta_ndbi_changed_median=round(r["delta_ndbi_changed_median"], 3))))
     _result_path(rid).parent.mkdir(parents=True, exist_ok=True)
     _result_path(rid).write_text(json.dumps({**out.model_dump(mode="json"), "_cubes": [before_cube_id, after_cube_id],
-                                                 "_water": water}))
+                                                 "_water": water, "_change": change}))
     return out
 
 
@@ -272,7 +274,7 @@ def render_evidence(result_id: str, title: str = "") -> EvidenceOutput:
         raise KeyError(f"unknown result_id {result_id!r}; call detect_change first")
     saved = json.loads(p.read_text())
     ds, wb, wa = _combined(*saved["_cubes"])
-    r = detect_change_timeseries(ds, wb, wa, water=saved.get("_water", "ndwi"))
+    r = detect_change_timeseries(ds, wb, wa, water=saved.get("_water", "ndwi"), change=saved.get("_change", "rule"))
     path = _root() / "evidence" / f"{result_id}.png"
     _render(ds, r, wb, wa, path, title or f"result {result_id}")
     return EvidenceOutput(path=str(path), description=(

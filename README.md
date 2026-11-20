@@ -22,7 +22,8 @@ from a cluster bootstrap over events or places.
 With the new cloud mask, the whole benchmark (150 questions) went from 0.853 to 0.860 (+0.007
 [−0.015, +0.029]); with the new change detector it stayed at 0.860; with the new burn detector it rose to
 0.887 (+0.027 [+0.006, +0.059]; all 13 wildfire questions right, against 9). Not worse was the condition
-for adopting each. Asked "was there new construction?" about 78 flooded areas, the change detector answers
+for adopting each. The last step, from a map to yes or no, kept its hand-set thresholds: thresholds fitted
+on the benchmark (leaving one of its 83 groups out) and a logistic regression did not beat them. Asked "was there new construction?" about 78 flooded areas, the change detector answers
 a false "yes" 21 times, against 25 for the rule it replaced; on 570 unburnt patches next to fires, the burn
 detector says "yes" 3.9 % of the time, against 5.1 %.
 
@@ -142,6 +143,7 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 | flood areas still called construction (21 of 78): combine with the water map, or train with flood examples | open |
 | burn scars: U-Net replaces the change rule (ImpactMesh-Fire, re-read as Earth Search median images) | done |
 | vegetation loss that is not fire (clear-cutting, drought): no training labels yet | open |
+| yes/no thresholds: fitted thresholds and a logistic regression against the hand-set ones | done: hand-set kept |
 | a model that reads every clear date of the time series, not two composites | planned |
 
 ## Repository
@@ -152,8 +154,8 @@ core/models/     water detectors (U-Net, TerraMind), cloud detector (OmniCloudMa
                  TerraMind for construction, U-Net for burnt land), all via ONNX
 mcp_server/      MCP servers: measure_change, and the four step functions
 agents/          the chat agent (Claude Agent SDK), LangGraph workflow, model back ends
-experiments/     b1_* optical water, b2_* radar water, b3_* clouds, b4_* construction, b5_* burnt land:
-                 data copies, training, reports, exports
+experiments/     b1_* optical water, b2_* radar water, b3_* clouds, b4_* construction, b5_* burnt land,
+                 b6_* yes/no thresholds: data copies, training, reports, exports
 eval/            the benchmarks (44 and 150 questions), reference pipeline, metrics
 examples/        chat.py: a conversation with the agent
 tests/           unit and integration tests
@@ -221,6 +223,8 @@ python -m experiments.b4_exam report terramind
 .venv-ml/bin/python -m experiments.b5_export --model unet
 python -m experiments.b5_exam run rule && python -m experiments.b5_exam run burn-unet
 python -m experiments.b5_exam report burn-unet
+# yes/no thresholds (the whole benchmark once with today's path, then the fits)
+python -m experiments.b6_exam && python -m experiments.b6_fit
 ```
 
 ## Data, models and licences

@@ -11,9 +11,10 @@ Every learned component in this system had to beat the rule it replaces, under a
 - [6. Which pixels are cloud or cloud shadow](#6-which-pixels-are-cloud-or-cloud-shadow)
 - [7. Which pixels changed through construction](#7-which-pixels-changed-through-construction)
 - [8. Which pixels burnt](#8-which-pixels-burnt)
-- [9. Comparison with published Sen1Floods11 results](#9-comparison-with-published-sen1floods11-results)
-- [10. The agent benchmark](#10-the-agent-benchmark)
-- [11. Limits](#11-limits)
+- [9. From a map to yes or no](#9-from-a-map-to-yes-or-no)
+- [10. Comparison with published Sen1Floods11 results](#10-comparison-with-published-sen1floods11-results)
+- [11. The agent benchmark](#11-the-agent-benchmark)
+- [12. Limits](#12-limits)
 
 ## 1. Principle: a model replaces a rule only if it wins
 
@@ -362,7 +363,40 @@ fitted dNBR would say "yes" on 24.9 % of them. On 462 patches at least 15 % burn
 26.6 %. So the U-Net now marks burnt pixels for vegetation-loss questions, from ONNX files on the CPU
 (about 80 s per question, against about 7 s for the rule).
 
-## 9. Comparison with published Sen1Floods11 results
+## 9. From a map to yes or no
+
+The last step of the answer path turns a map into an answer with two thresholds set by hand before any
+network existed: "yes" if the new water is at least 0.05 of the area (floods, optical and radar), or if
+the changed fraction is at least 0.03 (construction, vegetation loss). Once every map came from a trained
+network, the question was whether fitted thresholds, or a small classifier, answer better.
+
+**Test.** One complete run of today's path on all 150 benchmark questions, keeping every measured number;
+135 reach the yes/no step. The only labelled yes/no questions are the benchmark's, so each candidate is
+scored by **leaving one of the benchmark's 83 groups out** (fitted on the other 82, answering the
+left-out group). Candidates: one threshold per kind of measurement (optical flood, radar flood,
+construction, fire) from a fixed list, ties going to today's value; and a logistic regression per kind
+(floods: new water, water before, water after; others: log changed fraction). Adopted only if the whole
+interval of the accuracy difference (resampling the 83 groups) lies above zero.
+
+| | accuracy | minus today [95 % interval] |
+|---|---|---|
+| hand-set thresholds | 0.887 | |
+| fitted thresholds, leave one group out | 0.887 | +0.000 [+0.000, +0.000] |
+| logistic regression, leave one group out | 0.873 | −0.013 [−0.033, +0.000] |
+
+**The hand-set thresholds stay.** For optical floods, construction and fires the "yes" and "no"
+questions are separated by a wide gap around the threshold (45/45, 44/45, 13/13 right), so no threshold
+can do better. 9 of the 12 wrong radar answers are questions the benchmark expects "cannot tell" (2016
+floods without Level-2A optical images, polar night), written before radar was part of the path: radar
+now answers them. A lower radar threshold (0.03) would fix two answers of one flood, but no other flood
+supports it, and leaving groups out refuses it.
+
+![thresholds](figures/b6_thresholds.png)
+
+*One dot per benchmark question that reached the yes/no step, placed by its measured number and its
+expected answer; filled right, open wrong; dashed: the threshold.*
+
+## 10. Comparison with published Sen1Floods11 results
 
 Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
 optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
@@ -393,7 +427,7 @@ flood never seen, in the pipeline's own image formats), not from weak training. 
 optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
 keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
-## 10. The agent benchmark
+## 11. The agent benchmark
 
 `eval/benchmark.jsonl` (44 questions) and `eval/benchmark_v2.jsonl` (150): flood questions from
 Sen1Floods11 labels, construction and wildfire sites with verified dates, stable control sites, and
@@ -413,7 +447,7 @@ The final design follows from this: Claude holds the conversation, **all measure
 deterministic function** (`measure_change`), and two checks in code verify that the reply's answer and
 every number in it come from that function's results.
 
-## 11. Limits
+## 12. Limits
 
 - 10 flood events give wide intervals; the radar U-Net's gain is not significant (interval touches 0).
 - One seed per model in the optical comparison; three in the radar comparison.
@@ -432,5 +466,7 @@ every number in it come from that function's results.
 - The benchmark has no vegetation-loss question whose right answer is "no"; the false-alarm test uses
   2.56 km patches, smaller than the benchmark's 3-5 km areas. The burn network was trained only on fires:
   vegetation loss from clear-cutting or drought is untested.
+- The benchmark's "cannot tell" questions were written for an optical-only system; radar now answers nine
+  of them, and they count as wrong. Re-labelling them would be a change of the benchmark, not made here.
 - ImpactMesh-Fire is mostly European; 10 of the 13 benchmark fires are elsewhere (all answered right, but
   13 questions are few).

@@ -10,9 +10,10 @@ Every learned component in this system had to beat the rule it replaces, under a
 - [5. The answer path, end to end](#5-the-answer-path-end-to-end)
 - [6. Which pixels are cloud or cloud shadow](#6-which-pixels-are-cloud-or-cloud-shadow)
 - [7. Which pixels changed through construction](#7-which-pixels-changed-through-construction)
-- [8. Comparison with published Sen1Floods11 results](#8-comparison-with-published-sen1floods11-results)
-- [9. The agent benchmark](#9-the-agent-benchmark)
-- [10. Limits](#10-limits)
+- [8. Which pixels burnt](#8-which-pixels-burnt)
+- [9. Comparison with published Sen1Floods11 results](#9-comparison-with-published-sen1floods11-results)
+- [10. The agent benchmark](#10-the-agent-benchmark)
+- [11. Limits](#11-limits)
 
 ## 1. Principle: a model replaces a rule only if it wins
 
@@ -38,6 +39,7 @@ Every learned component in this system had to beat the rule it replaces, under a
 | Sen1Floods11 (Bonafilia et al. 2020) | 446 hand-labelled 512 × 512 tiles from 11 flood events, with Sentinel-1 and Sentinel-2 | public bucket `gs://sen1floods11` |
 | OSCD (Daudt et al. 2018), original files | 24 cities, two dates each (2015-2018), hand-drawn maps of urban change; the band files keep their map position | authors' site (link in the code), labels CC BY-NC-SA, not redistributed here |
 | CloudSEN12+ (Aybar et al. 2022, 2024) | about 10 000 Sentinel-2 images (509 × 509 pixels) with expert labels: clear, thick cloud, thin cloud, cloud shadow | Hugging Face `tacofoundation/cloudsen12`, CC0 |
+| ImpactMesh-Fire (IBM, DLR, ESA Φ-lab; version 1) | 229 fires (2016-2026), 16 512 patches of 256 × 256 pixels at 10 m, burnt-area labels from Copernicus Emergency Management Service maps; each label carries the fire's date; 42 fires held out by the data set | Hugging Face `ibm-esa-geospatial/ImpactMesh-Fire`, CC BY 4.0 |
 
 **The domain-shift trap, and how it is avoided.** Sen1Floods11's own images are Level-1C optical (top of
 atmosphere) and Earth-Engine sigma-naught radar. The pipeline reads Level-2A optical and RTC gamma-naught
@@ -57,6 +59,12 @@ image formats**, same scene, read onto the hand label's pixel grid:
 - `core/data/cloudsen12_es.py`: the CloudSEN12+ test images as Earth Search Level-2A, same tile and
   day, on the label's grid: 953 of 975 (192 places). Checked on three images: correlation with the data
   set's own Level-2A 1.000 in the 10 m bands, and lower after a one-pixel shift.
+
+- `core/data/impactmesh_es.py`: for every ImpactMesh-Fire patch, every Earth Search Level-2A image from
+  60 to 3 days before the fire and from 7 to 60 days after, on the label's grid, cloud-masked with
+  OmniCloudMask: 13 442 of 13 779 patches (1 269 of the 1 270 held-out ones; Earth Search has few 2016
+  images). Red band against the data set's own Level-2A: correlation 0.99-1.00, 0.87-0.95 after a
+  one-pixel shift.
 
 All decisions are made on these copies.
 
@@ -297,7 +305,64 @@ changed falls from 7.5 % to 2.1 %. Conselice: the rule "yes" (4.5 % changed), Te
 So TerraMind now draws the change map for construction questions, from ONNX files on the CPU (3 seeds,
 each trained on all 24 cities; about 1.5 minutes per question on a CPU, against about 10 s for the rule).
 
-## 8. Comparison with published Sen1Floods11 results
+## 8. Which pixels burnt
+
+A "vegetation loss" question ("did a wildfire burn this area?") used the same change rule as construction
+(section 7). Of the benchmark's 13 fire questions it answered 9 right; it said "no" for four large,
+well-documented fires (Jasper, Pedrógão Grande, Mati, Valparaíso).
+
+**Data.** ImpactMesh-Fire: burnt-area maps drawn by the Copernicus Emergency Management Service after 229
+fires, cut into 2.56 km patches; the data set holds out **42 fires** (1 270 patches, mostly European, also
+Bolivia, Mexico, Cyprus, the Canary Islands) that appear in neither its training nor validation part. All
+patches were re-read as the pipeline's two Earth Search median images (section 2). Four benchmark fires
+are in ImpactMesh's training part; they and six other fires at the same places were removed from training,
+so the benchmark is a fair test too. Training: 12 173 patches from 177 fires.
+
+**Test.** Main number: IoU of "burnt", pooled over the held-out patches' scored pixels (labelled, at least
+2 clear observations before and 1 after; the same for every detector); the interval resamples the 42 fires
+(10 000 times). If two passing networks lie within each other's interval, the cheaper one is taken.
+Candidates: the change rule with a refitted threshold, and **dNBR** (the standard burn index: the drop of
+NBR = (B08 − B12) / (B08 + B12)) with a fitted threshold, both fitted on the training fires; a **U-Net**
+(ResNet-18 encoder, 14 M parameters) from scratch on the two median images stacked (14 bands); B4's
+**Siamese TerraMind-1.0-base** fine-tuned; and **Prithvi-EO-2.0-300M-BurnScars** as published (US burn
+scars at 30 m, one after image; our after median averaged to 30 m). Networks: 10 000 steps, cross-entropy
++ Dice, 3 seeds, mean probability > 0.5.
+
+| detector | IoU | F1 | precision | recall | minus the rule [95 % interval] |
+|---|---|---|---|---|---|
+| the rule (change / scatter > 4) | 0.050 | 0.096 | 0.708 | 0.051 | |
+| the rule, threshold refitted (2) | 0.317 | 0.481 | 0.570 | 0.416 | +0.266 [+0.181, +0.406] |
+| dNBR > t, t fitted (0.20) | 0.560 | 0.718 | 0.797 | 0.653 | +0.510 [+0.413, +0.636] |
+| Prithvi-EO-2.0-300M-BurnScars, as published | 0.483 | 0.652 | 0.813 | 0.544 | +0.433 [+0.255, +0.645] |
+| TerraMind-1.0-base, Siamese, fine-tuned | 0.793 | 0.885 | 0.874 | 0.895 | +0.743 [+0.700, +0.778] |
+| **U-Net, from scratch** | **0.772** | **0.871** | **0.876** | **0.867** | **+0.722 [+0.671, +0.773]** |
+
+All three networks pass. TerraMind minus U-Net is +0.021 [−0.009, +0.044]; the interval contains zero
+and the U-Net has 7 times fewer parameters, so **the U-Net is adopted**, as the protocol fixed. It beats
+the best fitted rule (dNBR) by +0.212 [+0.104, +0.300] and is below it on 1 of 42 fires; single seeds
+0.749, 0.776, 0.764. The change rule marks almost nothing: a burn changes the bands by about a third,
+less than four times the date-to-date scatter of summer vegetation. Prithvi, seeing only the after image,
+cannot tell a new burn from an old scar or bare soil. For reference only (not a pipeline candidate, since
+the pipeline does not assemble its inputs): IBM and ESA's TerraMind-base-Fire, fine-tuned on ImpactMesh
+with four single dates, radar and elevation, reaches 0.864 on the same pixels. Setup check: our way of
+running Prithvi-BurnScars gives 0.848 on its own HLS test scenes (published 0.875).
+
+![burn](figures/b5_fire.png)
+
+*A held-out fire in Bolivia (chosen by a fixed rule: among patches at least 30 % burnt, the one whose
+U-Net IoU is closest to the overall 0.772). False colour (SWIR, near infrared, red): vegetation green,
+burns dark red-brown. White: burnt in map and label; red: false alarm; blue: missed.*
+
+**End to end.** All 150 benchmark questions with only the vegetation-loss detector changed: 0.860 →
+**0.887**, +0.027 [+0.006, +0.059]; all 13 fire questions right (the U-Net marks 19 % to 100 % of the
+areas burnt; the rule 0.4 % to 24 %). **False alarms:** 570 held-out patches with no burnt pixel
+(unburnt land next to a fire, in the fire season), answered with the pipeline's 3 % decision: false "yes"
+3.9 % with the U-Net, 5.1 % with the rule (−1.2 points [−6.5, +3.6]; the condition was "not more"); the
+fitted dNBR would say "yes" on 24.9 % of them. On 462 patches at least 15 % burnt: "yes" 97.8 % against
+26.6 %. So the U-Net now marks burnt pixels for vegetation-loss questions, from ONNX files on the CPU
+(about 80 s per question, against about 7 s for the rule).
+
+## 9. Comparison with published Sen1Floods11 results
 
 Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
 optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
@@ -328,7 +393,7 @@ flood never seen, in the pipeline's own image formats), not from weak training. 
 optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
 keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
-## 9. The agent benchmark
+## 10. The agent benchmark
 
 `eval/benchmark.jsonl` (44 questions) and `eval/benchmark_v2.jsonl` (150): flood questions from
 Sen1Floods11 labels, construction and wildfire sites with verified dates, stable control sites, and
@@ -348,7 +413,7 @@ The final design follows from this: Claude holds the conversation, **all measure
 deterministic function** (`measure_change`), and two checks in code verify that the reply's answer and
 every number in it come from that function's results.
 
-## 10. Limits
+## 11. Limits
 
 - 10 flood events give wide intervals; the radar U-Net's gain is not significant (interval touches 0).
 - One seed per model in the optical comparison; three in the radar comparison.
@@ -364,3 +429,8 @@ every number in it come from that function's results.
   end-to-end tests ran on Earth Search and did not get worse, but there are no pixel labels there.
 - The benchmark could gain at most one construction answer (the rule already got 44 of 45); the change
   network's gain is shown at pixel level, not in the benchmark.
+- The benchmark has no vegetation-loss question whose right answer is "no"; the false-alarm test uses
+  2.56 km patches, smaller than the benchmark's 3-5 km areas. The burn network was trained only on fires:
+  vegetation loss from clear-cutting or drought is untested.
+- ImpactMesh-Fire is mostly European; 10 of the 13 benchmark fires are elsewhere (all answered right, but
+  13 questions are few).

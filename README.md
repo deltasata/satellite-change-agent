@@ -17,11 +17,14 @@ from a cluster bootstrap over events or places.
 | flood questions answered correctly (72), end to end | optical images only: 0.722 | **optical U-Net + radar TerraMind when cloudy: 0.889** | +0.167 [+0.031, +0.346] |
 | which pixels are cloud or cloud shadow (953 expert-labelled images) | ESA scene classification: 0.644 IoU | **OmniCloudMask, used as published: 0.885** | +0.241 [+0.221, +0.261] |
 | which pixels changed through construction (OSCD, 24 cities) | change / noise > 4: 0.188 IoU | **TerraMind-1.0, Siamese, fine-tuned: 0.301** | +0.114 [+0.052, +0.180] |
+| which pixels burnt (ImpactMesh-Fire, 42 fires) | change / noise > 4: 0.050 IoU | **U-Net: 0.772** (dNBR fitted: 0.560) | +0.722 [+0.671, +0.773] |
 
 With the new cloud mask, the whole benchmark (150 questions) went from 0.853 to 0.860 (+0.007
-[−0.015, +0.029]); with the new change detector it stayed at 0.860. Not worse was the condition for
-adopting each. Asked "was there new construction?" about 78 flooded areas, the change detector answers
-a false "yes" 21 times, against 25 for the rule it replaced.
+[−0.015, +0.029]); with the new change detector it stayed at 0.860; with the new burn detector it rose to
+0.887 (+0.027 [+0.006, +0.059]; all 13 wildfire questions right, against 9). Not worse was the condition
+for adopting each. Asked "was there new construction?" about 78 flooded areas, the change detector answers
+a false "yes" 21 times, against 25 for the rule it replaced; on 570 unburnt patches next to fires, the burn
+detector says "yes" 3.9 % of the time, against 5.1 %.
 
 ## What it does
 
@@ -57,8 +60,10 @@ flowchart LR
     M -->|optical cannot tell:<br/>clouds| R[Sentinel-1 RTC radar]
     R --> T[TerraMind: water pixels]
     O --> V[TerraMind Siamese: changed pixels]
+    O --> B[U-Net: burnt pixels]
     U --> D[decision rule<br/>+ evidence]
     V --> D
+    B --> D
     T --> D
     D --> C
     C --> K{answer and every number<br/>must come from the measurement}
@@ -109,8 +114,19 @@ flowchart LR
    cities and tested on the 22nd beat the rule by +0.114 IoU (0.301 vs 0.188); the rule was already at its
    best threshold. FC-Siam-diff from scratch (0.225) became purer than the rule but found no more change:
    with 24 cities, pretraining is what helps. Conselice is now "no".
-9. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
-   arithmetic from the LLM into code raised a local 8B model from 0.48 to 0.66 on the benchmark.
+9. **The question decides the right reference, and a burn index is a strong one.** For "did a wildfire
+   burn here?" the generic change rule found 5 % of the burnt land in 42 held-out fires (IoU 0.050): a
+   burn changes the bands by about a third, less than the rule's four times the date-to-date scatter of
+   summer vegetation. The standard burn index dNBR with a fitted threshold reaches 0.560, so we required
+   the network to be judged against that too. A U-Net trained from scratch on ImpactMesh-Fire's burnt-area
+   maps, read as the pipeline's own median images, reaches 0.772 (+0.212 [+0.104, +0.300] over dNBR) and
+   says "yes" on unburnt land no more often than the change rule (3.9 % against 5.1 %) and far less often
+   than dNBR (24.9 %). A Siamese TerraMind reached 0.793, within the U-Net's interval and 7 times
+   larger, so the smaller network was taken. The published
+   Prithvi-EO-2.0-BurnScars (US scenes, one after image) reaches 0.483: without the before image it
+   cannot tell a new burn from an old scar.
+10. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
+    arithmetic from the LLM into code raised a local 8B model from 0.48 to 0.66 on the benchmark.
 
 Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
 
@@ -124,19 +140,20 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 | cloud mask: OmniCloudMask replaces ESA scene classification | done |
 | construction: Siamese TerraMind replaces the change rule (OSCD, located and re-read as Level-2A) | done |
 | flood areas still called construction (21 of 78): combine with the water map, or train with flood examples | open |
-| burn scars: segmentation model vs rule | planned |
+| burn scars: U-Net replaces the change rule (ImpactMesh-Fire, re-read as Earth Search median images) | done |
+| vegetation loss that is not fire (clear-cutting, drought): no training labels yet | open |
 | a model that reads every clear date of the time series, not two composites | planned |
 
 ## Repository
 
 ```text
 core/            satellite data access (STAC, COGs), cloud mask, time-series cube, measure_change
-core/models/     water detectors (U-Net, TerraMind), cloud detector (OmniCloudMask), change detector (Siamese
-                 TerraMind), all via ONNX
+core/models/     water detectors (U-Net, TerraMind), cloud detector (OmniCloudMask), change detectors (Siamese
+                 TerraMind for construction, U-Net for burnt land), all via ONNX
 mcp_server/      MCP servers: measure_change, and the four step functions
 agents/          the chat agent (Claude Agent SDK), LangGraph workflow, model back ends
-experiments/     b1_* optical water, b2_* radar water, b3_* clouds, b4_* construction: data copies,
-                 training, reports, exports
+experiments/     b1_* optical water, b2_* radar water, b3_* clouds, b4_* construction, b5_* burnt land:
+                 data copies, training, reports, exports
 eval/            the benchmarks (44 and 150 questions), reference pipeline, metrics
 examples/        chat.py: a conversation with the agent
 tests/           unit and integration tests
@@ -156,6 +173,7 @@ python -m pytest -q -m "not network"
 .venv-ml/bin/python -m experiments.b1_export && .venv-ml/bin/python -m experiments.b2_export
 .venv-ml/bin/python -m experiments.b3_export      # OmniCloudMask's published weights -> ONNX
 .venv-ml/bin/python -m experiments.b4_export --model terramind   # after training it (below)
+.venv-ml/bin/python -m experiments.b5_export --model unet        # after training it (below)
 
 # answer one question with fixed code (no language model)
 python -c "from core.measure import measure_change as m; \
@@ -167,7 +185,7 @@ python examples/chat.py --chat
 ```
 
 Reproducing the results (water: about 4 hours on four 24 GB GPUs; clouds: about 3 hours more;
-construction: about 2.5 hours more):
+construction: about 2.5 hours more; burnt land: about 2.5 hours more):
 
 ```bash
 python -m core.data.sen1floods11 && python -m core.data.sen1floods11_l2a && python -m core.data.sen1floods11_s1rtc
@@ -193,6 +211,16 @@ python -m experiments.b4_common && python -m experiments.b4_rules
 .venv-ml/bin/python -m experiments.b4_export --model terramind
 for p in B C; do python -m experiments.b4_exam run rule $p && python -m experiments.b4_exam run terramind $p; done
 python -m experiments.b4_exam report terramind
+# burnt land (ImpactMesh-Fire labels, 50 MB; Earth Search images read on four GPUs, about 1.5 hours)
+.venv-ml/bin/python -m core.data.impactmesh_es download && .venv-ml/bin/python -m core.data.impactmesh_es
+.venv-ml/bin/python -m core.data.impactmesh_es check     # alignment with the data set's own images
+.venv-ml/bin/python -m experiments.b5_common && .venv-ml/bin/python -m experiments.b5_common pack
+.venv-ml/bin/python -m experiments.b5_rules && .venv-ml/bin/python -m experiments.b5_train --all --gpus 0,1,2
+# Prithvi-EO-2.0-300M-BurnScars: put the model files from Hugging Face in data_cache/models/prithvi_burnscars
+.venv-ml/bin/python -m experiments.b5_prithvi partA && .venv-ml/bin/python -m experiments.b5_report
+.venv-ml/bin/python -m experiments.b5_export --model unet
+python -m experiments.b5_exam run rule && python -m experiments.b5_exam run burn-unet
+python -m experiments.b5_exam report burn-unet
 ```
 
 ## Data, models and licences
@@ -204,10 +232,13 @@ python -m experiments.b4_exam report terramind
 | Sentinel-1 RTC | Copernicus, via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/sentinel-1-rtc) | free and open Copernicus data; provider terms apply |
 | Sen1Floods11 | Bonafilia et al. 2020, `gs://sen1floods11` | CC BY 4.0 |
 | OSCD | Daudt et al. 2018, [the authors' site](https://rcdaudt.github.io/oscd/) | labels CC BY-NC-SA: not redistributed here, nor networks trained on them |
+| ImpactMesh-Fire | IBM, DLR, ESA Φ-lab, Hugging Face `ibm-esa-geospatial/ImpactMesh-Fire` (version 1); labels from Copernicus Emergency Management Service maps | CC BY 4.0 |
 | CloudSEN12+ | Aybar et al. 2022, 2024, Hugging Face `tacofoundation/cloudsen12` | CC0 |
 | OmniCloudMask | Wright et al. 2025, `pip install omnicloudmask` (version 1.8.1, model version 4) | MIT |
 | Prithvi-EO-2.0 | NASA / IBM, Hugging Face `ibm-nasa-geospatial` | Apache-2.0 |
+| Prithvi-EO-2.0-300M-BurnScars | NASA / IBM, Hugging Face `ibm-nasa-geospatial/Prithvi-EO-2.0-300M-BurnScars` (trained on HLS Burn Scars, CC BY 4.0) | Apache-2.0 |
 | TerraMind-1.0 | IBM / ESA, Hugging Face `ibm-esa-geospatial` | Apache-2.0 |
+| TerraMind-base-Fire (reference only) | IBM / ESA, Hugging Face `ibm-esa-geospatial/TerraMind-base-Fire`, run with the `impactmesh` package's script | Apache-2.0 |
 | Qwen3 | Alibaba, Hugging Face `Qwen` | Apache-2.0 |
 
 Code: Apache-2.0 (see `LICENSE`). Model weights and data are downloaded by scripts, not stored here.
@@ -223,5 +254,9 @@ Code: Apache-2.0 (see `LICENSE`). Model weights and data are downloaded by scrip
 - Daudt, Le Saux, Boulch, *Fully convolutional siamese networks for change detection*, ICIP 2018.
 - Aybar et al., *CloudSEN12, a global dataset for semantic understanding of cloud and cloud shadow in
   Sentinel-2*, Scientific Data 2022.
+- IBM, DLR and ESA Φ-lab, *ImpactMesh-Fire*, Hugging Face `ibm-esa-geospatial/ImpactMesh-Fire`, version 1,
+  2025 (developed in ESA Φ-lab's FAST-EO project).
+- Key and Benson, *Landscape assessment: ground measure of severity, the Composite Burn Index; and remote
+  sensing of severity, the Normalized Burn Ratio*, USDA Forest Service RMRS-GTR-164-CD, 2006 (dNBR).
 - Wright et al., *OmniCloudMask*, Remote Sensing of Environment, 2025.
 - Marsocci et al., *PANGAEA: a global and inclusive benchmark for geospatial foundation models*, arXiv 2412.04204, 2024.

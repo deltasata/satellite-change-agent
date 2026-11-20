@@ -45,8 +45,15 @@ CLOUD_DETECTOR = "ocm"
 # (change larger than 4 times the before images' date-to-date scatter) on 24 cities left out one group at a
 # time (IoU of "changed" 0.301 against 0.188, +0.114, interval +0.052..+0.180). On exam v2 the answers did not become worse
 # (0.860 -> 0.860), and on the 78 flood questions asked as construction questions it gave 21 false "yes"
-# instead of 25 (interval of the difference includes zero). "Vegetation loss" keeps the rule.
+# instead of 25 (interval of the difference includes zero).
 CHANGE_DETECTOR = "terramind"
+# Which pixels lost vegetation (burnt), for "vegetation loss" questions. Milestone B5, protocol in
+# docs/METHODS.md section 8: a U-Net trained from nothing on ImpactMesh-Fire (CEMS burnt-area labels, our
+# own Earth Search median images, fires near exam fires left out) beat the rule on 42 held-out fires (IoU of
+# "burnt" 0.772 against 0.050, +0.722, interval +0.671..+0.773). A Siamese TerraMind was within its interval
+# (0.793), so the cheaper network was taken. Exam v2: 0.860 -> 0.887 (all 13 fires right instead of 9); on
+# 570 unburnt patches 3.9 % false "yes" instead of 5.1 % (interval of the difference includes zero).
+VEGETATION_DETECTOR = "burn-unet"
 
 Kind = Literal["flood", "construction", "vegetation_loss"]
 
@@ -87,7 +94,7 @@ class MeasureResult(BaseModel):
     figure: str | None = Field(description="path of the evidence figure (PNG)")
     water_detector: str | None = Field(None, description="how water pixels were found (flood questions)")
     cloud_detector: str | None = Field(None, description="how cloud and shadow pixels were found (optical images)")
-    change_detector: str | None = Field(None, description="how changed pixels were found (construction questions)")
+    change_detector: str | None = Field(None, description="how changed pixels were found (construction and vegetation-loss questions)")
     sensor: str | None = Field(None, description="'optical' (Sentinel-2) or 'radar' (Sentinel-1, used for floods "
                                                  "when clouds hide the ground)")
     n_radar_days_before: int | None = None
@@ -158,11 +165,13 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
     model for floods under cloud: 'ALL' (default), '<event>' (that event left out; tests only), or None (off).
     `cloud` overrides the cloud detector ('scl' or 'ocm'; default CLOUD_DETECTOR). `change` overrides the
     change detector of construction questions ('rule', 'fsd', 'terramind', or '<model>-without-<group>' for
-    a place inside an OSCD city; default CHANGE_DETECTOR)."""
+    a place inside an OSCD city; default CHANGE_DETECTOR), and of vegetation-loss questions ('rule',
+    'burn-unet', 'burn-terramind'; default VEGETATION_DETECTOR)."""
     cloud = cloud or CLOUD_DETECTOR
     x = MeasureInput(**kwargs)
     water = (water or FLOOD_WATER_DETECTOR) if x.kind == "flood" else "ndwi"
-    change = (change or CHANGE_DETECTOR) if x.kind == "construction" else "rule"
+    change = ((change or CHANGE_DETECTOR) if x.kind == "construction" else
+              (change or VEGETATION_DETECTOR) if x.kind == "vegetation_loss" else "rule")
     bands = BANDS7 if (water != "ndwi" or change != "rule") else tools.DEFAULT_BANDS
     area = dict(lat=x.lat, lon=x.lon, size_km=x.size_km)
     steps: list[str] = []
@@ -170,7 +179,7 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
                before_period=None, after_period=None, n_images_before=None, n_clear_images_before=None,
                n_images_after=None, n_clear_images_after=None, measurement=None, figure=None, steps=steps,
                water_detector=WATER_NAMES.get(water, water) if x.kind == "flood" else None,
-               change_detector=CHANGE_NAMES.get(change.split("-without-")[0], change) if x.kind == "construction" else None,
+               change_detector=CHANGE_NAMES.get(change.split("-without-")[0], change) if x.kind != "flood" else None,
                cloud_detector={"scl": "ESA scene classification (SCL)", "ocm": "OmniCloudMask (milestone B3)"}[cloud])
 
     # The one retry with wider periods is allowed only when the periods came from an event date.

@@ -1,7 +1,7 @@
 """Draw docs/figures/results.png: every learned model against the rule it had to beat.
 
 The numbers are the measured results (runs/b1/report.json, runs/b2/report_A.json, runs/b2/report_C.json,
-runs/b3/report_A.json, runs/b4/report_A.json);
+runs/b3/report_A.json, runs/b4/report_A.json, runs/b5/report_A.json);
 they are written here so that the figure can be redrawn without the 10 GB of intermediate files.
 
     python scripts/make_figures.py
@@ -53,6 +53,14 @@ PANELS = [
         ("FC-Siam-diff, from scratch", 0.225, "model"),
         ("TerraMind-1.0-base, Siamese", 0.301, "adopted"),
     ], "+0.114 [+0.052, +0.180]\nover the rule"),
+    ("Which pixels burnt\nIoU of burnt, 42 fires held out (ImpactMesh-Fire)", [
+        ("change / scatter > 4", 0.050, "rule"),
+        ("same, threshold fitted", 0.317, "rule"),
+        ("dNBR > t, t fitted", 0.560, "rule"),
+        ("Prithvi-EO-2.0 BurnScars, as published", 0.483, "model"),
+        ("TerraMind-1.0-base, Siamese (7x larger)", 0.793, "model"),
+        ("U-Net, trained from scratch", 0.772, "adopted"),
+    ], "+0.722 [+0.671, +0.773]\nover the rule"),
 ]
 
 
@@ -61,7 +69,8 @@ def main() -> None:
                          "xtick.color": MUTED, "ytick.color": INK, "font.family": "DejaVu Sans"})
     fig, axes = plt.subplots(2, 3, figsize=(18, 9.6), facecolor=SURFACE)
     axes = axes.ravel()
-    axes[-1].axis("off")
+    for ax in axes[len(PANELS):]:
+        ax.axis("off")
     for ax, (title, rows, note) in zip(axes, PANELS):
         ax.set_facecolor(SURFACE)
         names = [r[0] for r in rows]
@@ -87,7 +96,7 @@ def main() -> None:
     handles = [plt.Rectangle((0, 0), 1, 1, color=RULE), plt.Rectangle((0, 0), 1, 1, color=MODEL)]
     fig.legend(handles, ["rule (threshold)", "learned model"], loc="lower center", ncol=2, frameon=False,
                bbox_to_anchor=(0.5, -0.02))
-    fig.text(0.01, -0.02, "Interval: 95 %, resampling whole flood events, places or groups of cities. Protocols fixed before any score: "
+    fig.text(0.01, -0.02, "Interval: 95 %, resampling whole flood events, places, groups of cities or fires. Protocols fixed before any score: "
              "docs/METHODS.md", fontsize=8.5, color=MUTED)
     fig.tight_layout(rect=(0, 0.02, 1, 1))
     OUT.parent.mkdir(parents=True, exist_ok=True)

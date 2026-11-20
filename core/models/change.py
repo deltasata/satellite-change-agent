@@ -1,4 +1,5 @@
-"""Which pixels changed through construction: a trained network on the two median images (milestone B4).
+"""Which pixels changed: a trained network on the two median images (construction: milestone B4; burnt
+vegetation: milestone B5, names starting with "burn-").
 
 The pipeline's rule (core/models/baseline.py) marks a pixel changed when its change is large compared
 with the before images' date-to-date scatter. B4 tests trained Siamese networks against it on OSCD's
@@ -10,6 +11,9 @@ by experiments/b4_export.py); the 3 seeds' probabilities are averaged, and a pix
 mean is above 0.5. Inputs are scaled as in training; missing values become 0 (the mean). The image is
 cut into 224 x 224 windows at stride 144 and the overlaps are averaged; an area smaller than 224 pixels
 is first extended by mirroring its edge.
+
+Burn networks (B5, protocol docs/METHODS.md section 8) work the same way, with their own files
+(data_cache/models/burn_<model>_s<seed>.onnx, made by experiments/b5_export.py) and the same inputs.
 """
 
 from __future__ import annotations
@@ -22,7 +26,9 @@ import numpy as np
 
 MODELS = Path(os.environ.get("EO_DATA_CACHE", Path(__file__).resolve().parents[2] / "data_cache")) / "models"
 NAMES = {"rule": "change rule: ratio to the before scatter above 4",
-         "fsd": "FC-Siam-diff (milestone B4)", "terramind": "TerraMind-1.0-base, Siamese (milestone B4)"}
+         "fsd": "FC-Siam-diff (milestone B4)", "terramind": "TerraMind-1.0-base, Siamese (milestone B4)",
+         "burn-unet": "U-Net, burnt pixels (milestone B5)",
+         "burn-terramind": "TerraMind-1.0-base, Siamese, burnt pixels (milestone B5)"}
 CROP, STRIDE = 224, 144
 MEAN = np.array([1503.317, 1718.197, 1853.91, 3083.234, 3132.22, 2424.884, 1857.648], np.float32)[:, None, None] * 1e-4
 STD = np.array([2141.107, 2038.973, 2134.138, 1871.918, 1753.829, 1434.261, 1334.311], np.float32)[:, None, None] * 1e-4
@@ -37,11 +43,16 @@ def _parse(name: str) -> tuple[str, str]:
 @lru_cache(maxsize=4)
 def _sessions(name: str):
     import onnxruntime as ort
-    model, group = _parse(name)
-    files = [MODELS / f"change_{model}_{group}_s{s}.onnx" for s in range(3)]
+    if name.startswith("burn-"):
+        files = [MODELS / f"burn_{name[5:]}_s{s}.onnx" for s in range(3)]
+        how = "experiments.b5_export"
+    else:
+        model, group = _parse(name)
+        files = [MODELS / f"change_{model}_{group}_s{s}.onnx" for s in range(3)]
+        how = "experiments.b4_export"
     missing = [f.name for f in files if not f.exists()]
     if missing:
-        raise FileNotFoundError(f"{missing} missing in {MODELS}; run .venv-ml/bin/python -m experiments.b4_export")
+        raise FileNotFoundError(f"{missing} missing in {MODELS}; run .venv-ml/bin/python -m {how}")
     opt = ort.SessionOptions()
     opt.intra_op_num_threads = int(os.environ.get("OMP_NUM_THREADS", "8"))
     return [ort.InferenceSession(str(f), opt, providers=["CPUExecutionProvider"]) for f in files]
@@ -53,7 +64,8 @@ def scale(x: np.ndarray) -> np.ndarray:
 
 def probability(before: np.ndarray, after: np.ndarray, name: str) -> np.ndarray:
     """before, after: (7, H, W) reflectance (blue, green, red, nir, nir08, swir16, swir22), NaN where
-    missing. Returns the mean probability of urban change over the 3 seeds, (H, W)."""
+    missing. Returns the mean probability of the network's class over the 3 seeds (urban change, or burnt
+    for the "burn-" networks), (H, W)."""
     b, a = scale(before), scale(after)
     H, W = b.shape[1:]
     ph, pw = max(0, CROP - H), max(0, CROP - W)

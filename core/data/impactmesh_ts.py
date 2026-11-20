@@ -1,5 +1,5 @@
 """ImpactMesh-Fire as an Earth Search time series: every clear date, not two medians (milestone B7; protocol:
-docs/METHODS.md (milestone B7, in progress)).
+docs/METHODS.md section 10).
 
 The same patches, items, grids, windows and cloud masks as the B5 copy (core/data/impactmesh_es.py), but
 each date is kept. For each patch: the dates of its B5 window ("normal" or "wide", as B5 used) with at

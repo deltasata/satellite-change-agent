@@ -128,6 +128,12 @@ flowchart LR
    cannot tell a new burn from an old scar.
 10. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
     arithmetic from the LLM into code raised a local 8B model from 0.48 to 0.66 on the benchmark.
+11. **Every clear date beats two median images, but not yet provably beats the incumbent.** A U-TAE
+    (temporal attention over each date and its day, 1.1M parameters, from scratch) reached IoU of burnt
+    0.815 on the 42 held-out fires against the median U-Net's 0.772, better on 30 of 42 fires at the same
+    false-alarm rate. Against the identical network fed two medians it gains +0.031 [+0.003, +0.049], so the
+    time information is worth having. Against the U-Net the interval is +0.043 [−0.011, +0.077]: one large
+    fire pulls it below zero, and by the rule written beforehand the U-Net stays.
 
 Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
 
@@ -144,7 +150,8 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 | burn scars: U-Net replaces the change rule (ImpactMesh-Fire, re-read as Earth Search median images) | done |
 | vegetation loss that is not fire (clear-cutting, drought): no training labels yet | open |
 | yes/no thresholds: fitted thresholds and a logistic regression against the hand-set ones | done: hand-set kept |
-| a model that reads every clear date of the time series, not two composites | planned |
+| a model that reads every clear date (U-TAE), tested for burnt land | done: best map (0.815 vs 0.772), not yet significant, U-Net kept |
+| every clear date for floods and construction; a second, newer set of fires | open |
 
 ## Repository
 
@@ -155,7 +162,7 @@ core/models/     water detectors (U-Net, TerraMind), cloud detector (OmniCloudMa
 mcp_server/      MCP servers: measure_change, and the four step functions
 agents/          the chat agent (Claude Agent SDK), LangGraph workflow, model back ends
 experiments/     b1_* optical water, b2_* radar water, b3_* clouds, b4_* construction, b5_* burnt land,
-                 b6_* yes/no thresholds: data copies, training, reports, exports
+                 b6_* yes/no thresholds, b7_* every clear date: data copies, training, reports, exports
 eval/            the benchmarks (44 and 150 questions), reference pipeline, metrics
 examples/        chat.py: a conversation with the agent
 tests/           unit and integration tests
@@ -187,7 +194,7 @@ python examples/chat.py --chat
 ```
 
 Reproducing the results (water: about 4 hours on four 24 GB GPUs; clouds: about 3 hours more;
-construction: about 2.5 hours more; burnt land: about 2.5 hours more):
+construction: about 2.5 hours more; burnt land: about 2.5 hours more; every clear date: about 4 hours more):
 
 ```bash
 python -m core.data.sen1floods11 && python -m core.data.sen1floods11_l2a && python -m core.data.sen1floods11_s1rtc
@@ -225,6 +232,10 @@ python -m experiments.b5_exam run rule && python -m experiments.b5_exam run burn
 python -m experiments.b5_exam report burn-unet
 # yes/no thresholds (the whole benchmark once with today's path, then the fits)
 python -m experiments.b6_exam && python -m experiments.b6_fit
+# every clear date (a per-date copy of the burnt-land patches, about 210 GB; then U-TAE and its control)
+.venv-ml/bin/python -m core.data.impactmesh_ts
+.venv-ml/bin/python -m experiments.b7_train --all --slots 1,2,4,5,5,5 --batch 4 --accum 2
+.venv-ml/bin/python -m experiments.b7_report
 ```
 
 ## Data, models and licences
@@ -263,4 +274,8 @@ Code: Apache-2.0 (see `LICENSE`). Model weights and data are downloaded by scrip
 - Key and Benson, *Landscape assessment: ground measure of severity, the Composite Burn Index; and remote
   sensing of severity, the Normalized Burn Ratio*, USDA Forest Service RMRS-GTR-164-CD, 2006 (dNBR).
 - Wright et al., *OmniCloudMask*, Remote Sensing of Environment, 2025.
+- Garnot and Landrieu, *Panoptic segmentation of satellite image time series with convolutional temporal
+  attention networks*, ICCV 2021 (U-TAE).
+- Garnot and Landrieu, *Lightweight temporal self-attention for classifying satellite images time series*,
+  AALTD workshop, ECML-PKDD 2020 (L-TAE).
 - Marsocci et al., *PANGAEA: a global and inclusive benchmark for geospatial foundation models*, arXiv 2412.04204, 2024.

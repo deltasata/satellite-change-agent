@@ -12,9 +12,10 @@ Every learned component in this system had to beat the rule it replaces, under a
 - [7. Which pixels changed through construction](#7-which-pixels-changed-through-construction)
 - [8. Which pixels burnt](#8-which-pixels-burnt)
 - [9. From a map to yes or no](#9-from-a-map-to-yes-or-no)
-- [10. Comparison with published Sen1Floods11 results](#10-comparison-with-published-sen1floods11-results)
-- [11. The agent benchmark](#11-the-agent-benchmark)
-- [12. Limits](#12-limits)
+- [10. Every clear date instead of two medians](#10-every-clear-date-instead-of-two-medians)
+- [11. Comparison with published Sen1Floods11 results](#11-comparison-with-published-sen1floods11-results)
+- [12. The agent benchmark](#12-the-agent-benchmark)
+- [13. Limits](#13-limits)
 
 ## 1. Principle: a model replaces a rule only if it wins
 
@@ -396,7 +397,47 @@ supports it, and leaving groups out refuses it.
 *One dot per benchmark question that reached the yes/no step, placed by its measured number and its
 expected answer; filled right, open wrong; dashed: the threshold.*
 
-## 10. Comparison with published Sen1Floods11 results
+## 10. Every clear date instead of two medians
+
+Every network above sees a place through two median images. A median removes clouds but discards when each
+image was taken: a burn scar is darkest just after the fire and fades as plants regrow. The question here
+is whether a network that reads **every clear date, with its day**, marks burnt pixels better than the
+U-Net of section 8, on the same 42 held-out fires and the same pixels.
+
+**Data.** Section 8's patches, windows and cloud masks, re-read with each date kept: dates with at least 1 %
+clear pixels, at most 12 per window (the clearest), in time order. 13 442 patches, 18.4 dates on average
+(about 10 before, 9 after).
+
+**Network.** **U-TAE** (Garnot and Landrieu, 2021), implemented here: a convolutional encoder applied to
+each date with shared weights, a lightweight temporal attention (L-TAE: 16 heads, one learned query each)
+at the coarsest scale that weights the dates at every position, using a sinusoidal code of the day and a
+"before"/"after" code, and a U-Net decoder. The same attention weights collapse the skip connections over
+time. 1.1 million parameters, trained from scratch with section 8's settings (10 000 steps, batch 8, 3
+seeds; about 2.6 hours per run on one A10). **Control:** the same U-TAE given only the two medians, so that
+a gain can be attributed to the dates rather than to the architecture. Adopted only if the whole interval
+over the U-Net is above zero and false alarms do not rise.
+
+| detector | IoU of burnt | precision | recall | minus the U-Net [95 %] |
+|---|---|---|---|---|
+| U-Net, two medians (section 8, in use) | 0.772 | 0.876 | 0.867 | |
+| Siamese TerraMind, two medians (section 8) | 0.793 | 0.874 | 0.895 | +0.021 [−0.009, +0.044] |
+| U-TAE, two medians (control) | 0.783 | 0.841 | 0.920 | +0.011 [−0.020, +0.030] |
+| **U-TAE, every clear date** | **0.815** | 0.871 | 0.926 | **+0.043 [−0.011, +0.077]** |
+
+**The U-Net stays.** U-TAE gives the best map measured so far, better on 30 of 42 fires, with higher recall
+at the same precision and the same false "yes" rate on 570 unburnt patches (3.9 %). But the interval
+reaches below zero: one of the largest fires (EMSR506, 0.86 with the U-Net, 0.77 with U-TAE) carries much
+weight in the pooled IoU. **The dates help:** U-TAE on every date minus the same network on two medians is
++0.031 [+0.003, +0.049], wholly above zero. On 42 fires, "probably better by about 0.04" is not enough
+to pass the rule written beforehand; a second, newer set of fires would decide it.
+
+![every clear date](figures/b7_dates.png)
+
+*One typical held-out patch (chosen by a fixed rule: U-TAE's IoU closest to its pooled value). Top: every
+date U-TAE saw, false colour (SWIR, NIR, red), grey where masked. Bottom: the two medians and the three
+maps; white burnt in map and label, red false alarm, blue missed.*
+
+## 11. Comparison with published Sen1Floods11 results
 
 Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
 optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
@@ -427,7 +468,7 @@ flood never seen, in the pipeline's own image formats), not from weak training. 
 optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
 keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
-## 11. The agent benchmark
+## 12. The agent benchmark
 
 `eval/benchmark.jsonl` (44 questions) and `eval/benchmark_v2.jsonl` (150): flood questions from
 Sen1Floods11 labels, construction and wildfire sites with verified dates, stable control sites, and
@@ -447,7 +488,7 @@ The final design follows from this: Claude holds the conversation, **all measure
 deterministic function** (`measure_change`), and two checks in code verify that the reply's answer and
 every number in it come from that function's results.
 
-## 12. Limits
+## 13. Limits
 
 - 10 flood events give wide intervals; the radar U-Net's gain is not significant (interval touches 0).
 - One seed per model in the optical comparison; three in the radar comparison.
@@ -470,3 +511,5 @@ every number in it come from that function's results.
   of them, and they count as wrong. Re-labelling them would be a change of the benchmark, not made here.
 - ImpactMesh-Fire is mostly European; 10 of the 13 benchmark fires are elsewhere (all answered right, but
   13 questions are few).
+- 42 held-out fires are too few to show a gain of about 0.04 in IoU of burnt (section 10): one large fire
+  can move the pooled score by several hundredths. The time-series network was tested on fires only.

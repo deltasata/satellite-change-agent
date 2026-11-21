@@ -140,8 +140,8 @@ flowchart LR
     the burn map.
 12. **More sensors did not help, and an independent test changed the ranking.** The same U-TAE given
     Sentinel-1 radar and elevation as well tied on the new fires (0.859) and was worse on the old ones
-    (0.722 against 0.815; the radar dates make it miss burnt land on four fires, for reasons not yet
-    understood). The published TerraMind-base-Fire (168M parameters, four dates of optical, radar and
+    (0.722 against 0.815; the radar dates make it miss burnt land on four fires, for reasons not
+    understood), so it was dropped. The published TerraMind-base-Fire (168M parameters, four dates of optical, radar and
     elevation) leads on the data set's own held-out fires (0.864) but scores 0.835 on the new fires, below
     our 1.1M-parameter U-TAE (−0.024 [−0.037, −0.010]). A score on a data set's own test split is not the
     same as a score on new events.
@@ -163,7 +163,7 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 | yes/no thresholds: fitted thresholds and a logistic regression against the hand-set ones | done: hand-set kept |
 | a model that reads every clear date (U-TAE), tested for burnt land | done: best map (0.815 vs 0.772), not yet significant, U-Net kept |
 | a second, newer set of fires (CEMS 2026); radar and elevation for burnt land; TerraMind-base-Fire | done: U-TAE replaces the U-Net; radar not used |
-| why radar hurts on some fires; radar for fires under cloud | open |
+| why radar hurts on some fires; radar for fires under cloud | dropped: no gain on the new fires |
 | every clear date for floods and construction | open |
 
 ## Repository

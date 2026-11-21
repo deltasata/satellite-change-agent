@@ -74,3 +74,16 @@ def test_pipeline_dates_follow_the_training_copy():
     from core.measure import VEGETATION_DETECTOR
     from core.models.change import NAMES, SERIES
     assert VEGETATION_DETECTOR in NAMES and VEGETATION_DETECTOR in SERIES
+
+
+def test_pipeline_burn_detector_takes_no_radar():
+    """The radar network was dropped after B8: the pipeline's burn detector reads the 7 optical bands and a
+    clear flag, nothing else."""
+    import inspect
+    from core.measure import VEGETATION_DETECTOR
+    from core.models import change
+    assert VEGETATION_DETECTOR == "burn-utae"
+    assert "radar" not in change.NAMES[VEGETATION_DETECTOR].lower()
+    assert change.MEAN.shape[0] == 7                                     # 7 optical bands
+    src = inspect.getsource(change.probability_series)
+    assert "burn_radar" not in src and "dem" not in src.lower()

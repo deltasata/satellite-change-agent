@@ -15,6 +15,9 @@ date, AdamW 1e-3 cosine, weight decay 0.05, 10 000 steps of 8 patches, cross-ent
     .venv-ml/bin/python -m experiments.b8_train --all --slots 1,2,4
 Writes runs/b8/runs/utae_rd_s<seed>/: result.json, weights.pt, prob_heldout.npz (the 42 held-out fires).
 Predictions on the new fires of 2026: experiments/b8_predict.py.
+
+Dropped after B8: it tied with the optical U-TAE on the new fires and was worse on four old held-out fires, so
+the pipeline does not use it. The script stays so that the reported numbers can be reproduced.
 """
 
 from __future__ import annotations

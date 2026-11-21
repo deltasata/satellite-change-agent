@@ -484,7 +484,8 @@ training copy's date rule) from ONNX files on the CPU, in 10-25 s per 5 km area 
 0.722, against 0.815 without radar, all three seeds alike. The loss sits in four fires (Bolivia 0.81 → 0.52;
 also Scotland, northern Italy, Croatia), mostly as missed burnt land. Our radar equals the data set's own
 (correlation 1.000); removing the radar dates restores 0.74. Why the network misreads radar there is not
-known.
+known. Since it brings no gain on the new fires, the radar network was dropped and this was not followed
+further; radar for fires under cloud, where it could still matter, is untested.
 
 **An independent test changes the ranking.** TerraMind-base-Fire falls from 0.864 on ImpactMesh's held-out
 fires to 0.835 on the new fires, level with the U-Net, while our networks rise (U-TAE 0.815 → 0.859).

@@ -53,7 +53,13 @@ CHANGE_DETECTOR = "terramind"
 # "burnt" 0.772 against 0.050, +0.722, interval +0.671..+0.773). A Siamese TerraMind was within its interval
 # (0.793), so the cheaper network was taken. Exam v2: 0.860 -> 0.887 (all 13 fires right instead of 9); on
 # 570 unburnt patches 3.9 % false "yes" instead of 5.1 % (interval of the difference includes zero).
-VEGETATION_DETECTOR = "burn-unet"
+# Milestone B8 (21 November 2026), protocol in docs/METHODS.md section 11: on 44 new fires of 2026, later than
+# every training fire (CEMS maps, labels by ImpactMesh's rule), B7's U-TAE on every clear date beat the U-Net
+# (IoU of "burnt" 0.859 against 0.838, +0.021, interval +0.012..+0.035); a U-TAE that also sees radar and
+# elevation did as well (0.859) but not better, and has more parameters and inputs, so the smaller one was
+# taken. False "yes" on 701 unburnt new patches 0.6 % against 0.7 %; exam v2 unchanged (0.887, all 13 fires
+# right). It runs on the CPU in about 10-25 s per 5 km area instead of 0.5 s.
+VEGETATION_DETECTOR = "burn-utae"
 
 Kind = Literal["flood", "construction", "vegetation_loss"]
 
@@ -166,7 +172,7 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
     `cloud` overrides the cloud detector ('scl' or 'ocm'; default CLOUD_DETECTOR). `change` overrides the
     change detector of construction questions ('rule', 'fsd', 'terramind', or '<model>-without-<group>' for
     a place inside an OSCD city; default CHANGE_DETECTOR), and of vegetation-loss questions ('rule',
-    'burn-unet', 'burn-terramind'; default VEGETATION_DETECTOR)."""
+    'burn-unet', 'burn-terramind', 'burn-utae'; default VEGETATION_DETECTOR)."""
     cloud = cloud or CLOUD_DETECTOR
     x = MeasureInput(**kwargs)
     water = (water or FLOOD_WATER_DETECTOR) if x.kind == "flood" else "ndwi"

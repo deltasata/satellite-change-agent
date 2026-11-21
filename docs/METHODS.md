@@ -13,9 +13,10 @@ Every learned component in this system had to beat the rule it replaces, under a
 - [8. Which pixels burnt](#8-which-pixels-burnt)
 - [9. From a map to yes or no](#9-from-a-map-to-yes-or-no)
 - [10. Every clear date instead of two medians](#10-every-clear-date-instead-of-two-medians)
-- [11. Comparison with published Sen1Floods11 results](#11-comparison-with-published-sen1floods11-results)
-- [12. The agent benchmark](#12-the-agent-benchmark)
-- [13. Limits](#13-limits)
+- [11. A second test: fires of 2026, and radar](#11-a-second-test-fires-of-2026-and-radar)
+- [12. Comparison with published Sen1Floods11 results](#12-comparison-with-published-sen1floods11-results)
+- [13. The agent benchmark](#13-the-agent-benchmark)
+- [14. Limits](#14-limits)
 
 ## 1. Principle: a model replaces a rule only if it wins
 
@@ -429,7 +430,7 @@ at the same precision and the same false "yes" rate on 570 unburnt patches (3.9 
 reaches below zero: one of the largest fires (EMSR506, 0.86 with the U-Net, 0.77 with U-TAE) carries much
 weight in the pooled IoU. **The dates help:** U-TAE on every date minus the same network on two medians is
 +0.031 [+0.003, +0.049], wholly above zero. On 42 fires, "probably better by about 0.04" is not enough
-to pass the rule written beforehand; a second, newer set of fires would decide it.
+to pass the rule written beforehand; a second, newer set of fires would decide it. (It did: section 11.)
 
 ![every clear date](figures/b7_dates.png)
 
@@ -437,7 +438,66 @@ to pass the rule written beforehand; a second, newer set of fires would decide i
 date U-TAE saw, false colour (SWIR, NIR, red), grey where masked. Bottom: the two medians and the three
 maps; white burnt in map and label, red false alarm, blue missed.*
 
-## 11. Comparison with published Sen1Floods11 results
+## 11. A second test: fires of 2026, and radar
+
+Section 10 left U-TAE "probably better" on 42 fires. Two questions were then tested under one protocol,
+written before any score: does adding **radar and elevation** help, and do the candidates beat the U-Net on
+**fires later than every fire they were trained on**? The published **TerraMind-base-Fire** (IBM and ESA,
+fine-tuned on ImpactMesh-Fire with four dates of optical, radar and elevation; 0.864 on its held-out fires)
+was a candidate too.
+
+**New test set.** The 45 wildfire activations of the Copernicus Emergency Management Service from 26
+January to 15 September 2026, all later than ImpactMesh's newest fire. ImpactMesh does not publish its
+label rule; on one of its fires (EMSR859, 138 patches) this one reproduces its label files exactly (IoU
+1.000): per mapped area, the grading map (else the last delineation map), every pixel a "burnt area"
+polygon touches. Taking only pixels whose centre is inside gives 0.897, merging all maps 0.875. Land
+outside the mapped area is left unlabelled. Patches of 2.56 km on a 2 560 m grid, kept if at least half
+inside the mapped area: **2 215 patches from 44 fires** (one too small), 42 of them in Europe. The images
+exactly as sections 8 and 10.
+
+**Candidates.** (1) Section 10's U-TAE, as trained. (2) **U-TAE with radar and elevation**: the same
+network with 12 inputs per date: optical dates and Sentinel-1 RTC radar dates (VV, VH in dB, at most 8 per
+window) in one sequence in time order, each with a flag, and Copernicus DEM elevation on every date;
+trained as section 10 (3 seeds, about 4.8 hours per run on one A10). (3) TerraMind-base-Fire as published,
+its four-date inputs built by our own code from Planetary Computer. Check before any score: on the 42
+held-out fires our inputs give 0.863 against 0.864 with the data set's own files (−0.001 [−0.024, +0.009]),
+although our date rule picks the same day as the data set only 15-82 % of the time.
+
+**Rule.** Pass if the whole interval over the U-Net (resampling the fires) is above zero; of those, the
+best, unless a smaller one lies within the best one's interval; then not adopted if false alarms rise or
+the benchmark gets worse.
+
+| detector | parameters | IoU of burnt, 44 new fires | minus the U-Net [95 %] | false "yes", 701 unburnt patches | IoU, 42 held-out fires |
+|---|---|---|---|---|---|
+| U-Net, two medians (section 8) | 14.4 M | 0.838 | | 0.7 % | 0.772 |
+| **U-TAE, every clear date (section 10)** | 1.14 M | **0.859** | **+0.021 [+0.012, +0.035]** | 0.6 % | 0.815 |
+| U-TAE with radar and elevation | 1.14 M | 0.859 | +0.021 [+0.012, +0.033] | 0.3 % | 0.722 |
+| TerraMind-base-Fire, as published | 168 M | 0.835 | −0.003 [−0.020, +0.019] | 0.4 % | 0.864 |
+
+**U-TAE replaces the U-Net.** Both U-TAE networks pass and tie with each other (+0.000 [−0.010, +0.006]),
+so the one with fewer parameters and inputs, needing no radar or elevation, was taken. False alarms did not
+rise; the benchmark is unchanged (0.887; all 13 fire questions right with either network). U-TAE is better
+on 37 of the 44 new fires. In the pipeline it reads every clear date of the question's two periods (the
+training copy's date rule) from ONNX files on the CPU, in 10-25 s per 5 km area instead of 0.5 s.
+
+**Radar did not help, and on four old fires it hurt.** On the held-out fires the radar network scores
+0.722, against 0.815 without radar, all three seeds alike. The loss sits in four fires (Bolivia 0.81 → 0.52;
+also Scotland, northern Italy, Croatia), mostly as missed burnt land. Our radar equals the data set's own
+(correlation 1.000); removing the radar dates restores 0.74. Why the network misreads radar there is not
+known.
+
+**An independent test changes the ranking.** TerraMind-base-Fire falls from 0.864 on ImpactMesh's held-out
+fires to 0.835 on the new fires, level with the U-Net, while our networks rise (U-TAE 0.815 → 0.859).
+Against it on the new fires: U-TAE +0.024 [+0.010, +0.037]. The new fires may simply be easier for
+two-period optical maps; whether ImpactMesh's held-out fires resemble its training fires closely enough to
+flatter a model fine-tuned on them was not tested.
+
+![new fires](figures/b8_fires.png)
+
+*Left: each detector on the 42 held-out fires and on the 44 new fires. Right: one dot per new fire, the
+U-Net's IoU against U-TAE's.*
+
+## 12. Comparison with published Sen1Floods11 results
 
 Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
 optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
@@ -468,7 +528,7 @@ flood never seen, in the pipeline's own image formats), not from weak training. 
 optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
 keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
-## 12. The agent benchmark
+## 13. The agent benchmark
 
 `eval/benchmark.jsonl` (44 questions) and `eval/benchmark_v2.jsonl` (150): flood questions from
 Sen1Floods11 labels, construction and wildfire sites with verified dates, stable control sites, and
@@ -488,7 +548,7 @@ The final design follows from this: Claude holds the conversation, **all measure
 deterministic function** (`measure_change`), and two checks in code verify that the reply's answer and
 every number in it come from that function's results.
 
-## 13. Limits
+## 14. Limits
 
 - 10 flood events give wide intervals; the radar U-Net's gain is not significant (interval touches 0).
 - One seed per model in the optical comparison; three in the radar comparison.
@@ -513,3 +573,6 @@ every number in it come from that function's results.
   13 questions are few).
 - 42 held-out fires are too few to show a gain of about 0.04 in IoU of burnt (section 10): one large fire
   can move the pooled score by several hundredths. The time-series network was tested on fires only.
+- Both pixel-level fire test sets are mostly European (40 of 42 held-out fires, 42 of 44 new fires); only the
+  benchmark's fires (10 of 13 outside Europe) test other regions. The new fires were mostly clear, so radar
+  was not tested where optical images fail.

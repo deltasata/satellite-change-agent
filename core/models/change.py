@@ -14,6 +14,12 @@ is first extended by mirroring its edge.
 
 Burn networks (B5, protocol docs/METHODS.md section 8) work the same way, with their own files
 (data_cache/models/burn_<model>_s<seed>.onnx, made by experiments/b5_export.py) and the same inputs.
+
+"burn-utae" (B7's U-TAE, adopted in B8, protocol docs/METHODS.md section 11) sees every clear date instead of
+the two medians (files made by experiments/b8_export.py). The dates are chosen as in its training copy
+(core/data/impactmesh_ts.py): per period, every date with at least 1 % clear pixels in the area, at most the
+12 clearest, in time order. Each date is 8 channels (7 bands scaled as above, missing 0, and a clear flag),
+with its day counted from the first day of the after period and its period (0 before, 1 after).
 """
 
 from __future__ import annotations
@@ -28,7 +34,10 @@ MODELS = Path(os.environ.get("EO_DATA_CACHE", Path(__file__).resolve().parents[2
 NAMES = {"rule": "change rule: ratio to the before scatter above 4",
          "fsd": "FC-Siam-diff (milestone B4)", "terramind": "TerraMind-1.0-base, Siamese (milestone B4)",
          "burn-unet": "U-Net, burnt pixels (milestone B5)",
-         "burn-terramind": "TerraMind-1.0-base, Siamese, burnt pixels (milestone B5)"}
+         "burn-terramind": "TerraMind-1.0-base, Siamese, burnt pixels (milestone B5)",
+         "burn-utae": "U-TAE on every clear date, burnt pixels (milestones B7, B8)"}
+SERIES = {"burn-utae"}            # networks that see every clear date, not two medians
+MIN_CLEAR, MAX_PER_PERIOD = 0.01, 12
 CROP, STRIDE = 224, 144
 MEAN = np.array([1503.317, 1718.197, 1853.91, 3083.234, 3132.22, 2424.884, 1857.648], np.float32)[:, None, None] * 1e-4
 STD = np.array([2141.107, 2038.973, 2134.138, 1871.918, 1753.829, 1434.261, 1334.311], np.float32)[:, None, None] * 1e-4
@@ -45,7 +54,7 @@ def _sessions(name: str):
     import onnxruntime as ort
     if name.startswith("burn-"):
         files = [MODELS / f"burn_{name[5:]}_s{s}.onnx" for s in range(3)]
-        how = "experiments.b5_export"
+        how = "experiments.b8_export" if name in SERIES else "experiments.b5_export"
     else:
         model, group = _parse(name)
         files = [MODELS / f"change_{model}_{group}_s{s}.onnx" for s in range(3)]
@@ -86,6 +95,41 @@ def probability(before: np.ndarray, after: np.ndarray, name: str) -> np.ndarray:
             for (i, j), pi in zip(wins[k:k + 8], p):
                 prob[i:i + CROP, j:j + CROP] += pi
                 hits[i:i + CROP, j:j + CROP] += 1
+    return (prob / hits)[:H, :W]
+
+
+def select(clear: np.ndarray) -> list[int]:
+    """Indices of the dates kept in one period from each date's clear fraction: at least MIN_CLEAR, at most
+    MAX_PER_PERIOD (the clearest), in time order (the rule of core/data/impactmesh_ts.py)."""
+    idx = [k for k in range(len(clear)) if clear[k] >= MIN_CLEAR]
+    if len(idx) > MAX_PER_PERIOD:
+        idx = sorted(sorted(idx, key=lambda k: -clear[k])[:MAX_PER_PERIOD])
+    return idx
+
+
+def probability_series(x: np.ndarray, days: np.ndarray, period: np.ndarray, name: str) -> np.ndarray:
+    """x: (T, 7, H, W) reflectance of the chosen dates, NaN where not clear; days: (T,) days since the after
+    period began; period: (T,) 0 before, 1 after. Returns the mean probability of "burnt" over the 3 seeds,
+    (H, W). Windows of 224 at stride 144 as above; one window at a time (the number of dates makes them large)."""
+    clear = np.isfinite(x).all(1, keepdims=True).astype(np.float32)
+    z = np.concatenate([np.stack([scale(d) for d in x]), clear], axis=1)          # (T, 8, H, W)
+    H, W = z.shape[2:]
+    ph, pw = max(0, CROP - H), max(0, CROP - W)
+    if ph or pw:
+        z = np.pad(z, ((0, 0), (0, 0), (0, ph), (0, pw)), mode="reflect")
+    Hp, Wp = z.shape[2:]
+    starts = lambda n: sorted(set(list(range(0, n - CROP + 1, STRIDE)) + [n - CROP]))
+    wins = [(i, j) for i in starts(Hp) for j in starts(Wp)]
+    d = np.asarray(days, np.int64)[None]
+    p = np.asarray(period, np.int64)[None]
+    pad = np.zeros(d.shape, bool)
+    prob, hits = np.zeros((Hp, Wp), np.float32), np.zeros((Hp, Wp), np.float32)
+    for s in _sessions(name):
+        for i, j in wins:
+            logits = s.run(None, {"x": z[None, :, :, i:i + CROP, j:j + CROP], "days": d, "period": p, "pad": pad})[0]
+            e = np.exp(logits - logits.max(1, keepdims=True))
+            prob[i:i + CROP, j:j + CROP] += (e[:, 1] / e.sum(1))[0]
+            hits[i:i + CROP, j:j + CROP] += 1
     return (prob / hits)[:H, :W]
 
 

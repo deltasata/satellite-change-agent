@@ -10,7 +10,7 @@ from a cluster bootstrap over events or places.
 
 ![results](docs/figures/results.png)
 
-| step | rule it replaced | learned model adopted | gain [95 % interval] |
+| step | rule (or model) it replaced | learned model adopted | gain [95 % interval] |
 |---|---|---|---|
 | which pixels are water, optical (Sentinel-2) | NDWI > 0: 0.690 IoU | **U-Net: 0.833** | +0.143 [+0.083, +0.219] |
 | which pixels are water, radar (Sentinel-1, sees through cloud) | VH < t: 0.477 IoU | **TerraMind-1.0, fine-tuned: 0.611** | +0.134 [+0.090, +0.192] |
@@ -18,10 +18,12 @@ from a cluster bootstrap over events or places.
 | which pixels are cloud or cloud shadow (953 expert-labelled images) | ESA scene classification: 0.644 IoU | **OmniCloudMask, used as published: 0.885** | +0.241 [+0.221, +0.261] |
 | which pixels changed through construction (OSCD, 24 cities) | change / noise > 4: 0.188 IoU | **TerraMind-1.0, Siamese, fine-tuned: 0.301** | +0.114 [+0.052, +0.180] |
 | which pixels burnt (ImpactMesh-Fire, 42 fires) | change / noise > 4: 0.050 IoU | **U-Net: 0.772** (dNBR fitted: 0.560) | +0.722 [+0.671, +0.773] |
+| which pixels burnt, 44 new fires of 2026 (later than all training) | the U-Net above: 0.838 IoU | **U-TAE on every clear date: 0.859** | +0.021 [+0.012, +0.035] |
 
 With the new cloud mask, the whole benchmark (150 questions) went from 0.853 to 0.860 (+0.007
 [−0.015, +0.029]); with the new change detector it stayed at 0.860; with the new burn detector it rose to
-0.887 (+0.027 [+0.006, +0.059]; all 13 wildfire questions right, against 9). Not worse was the condition
+0.887 (+0.027 [+0.006, +0.059]; all 13 wildfire questions right, against 9), and stayed there when U-TAE
+replaced the U-Net. Not worse was the condition
 for adopting each. The last step, from a map to yes or no, kept its hand-set thresholds: thresholds fitted
 on the benchmark (leaving one of its 83 groups out) and a logistic regression did not beat them. Asked "was there new construction?" about 78 flooded areas, the change detector answers
 a false "yes" 21 times, against 25 for the rule it replaced; on 570 unburnt patches next to fires, the burn
@@ -56,12 +58,12 @@ flowchart LR
     P[person] --> S{off-topic check<br/>local Qwen3}
     S -->|on topic| C[Claude<br/>holds the conversation]
     C -->|MCP| M[measure_change<br/>deterministic code]
-    M --> O[Sentinel-2 L2A<br/>OmniCloudMask, median composites]
+    M --> O[Sentinel-2 L2A<br/>OmniCloudMask]
     O --> U[U-Net: water pixels]
     M -->|optical cannot tell:<br/>clouds| R[Sentinel-1 RTC radar]
     R --> T[TerraMind: water pixels]
     O --> V[TerraMind Siamese: changed pixels]
-    O --> B[U-Net: burnt pixels]
+    O --> B[U-TAE, every clear date:<br/>burnt pixels]
     U --> D[decision rule<br/>+ evidence]
     V --> D
     B --> D
@@ -128,12 +130,21 @@ flowchart LR
    cannot tell a new burn from an old scar.
 10. **For agents, orchestration and arithmetic placement matter as much as the model.** Moving date
     arithmetic from the LLM into code raised a local 8B model from 0.48 to 0.66 on the benchmark.
-11. **Every clear date beats two median images, but not yet provably beats the incumbent.** A U-TAE
-    (temporal attention over each date and its day, 1.1M parameters, from scratch) reached IoU of burnt
-    0.815 on the 42 held-out fires against the median U-Net's 0.772, better on 30 of 42 fires at the same
-    false-alarm rate. Against the identical network fed two medians it gains +0.031 [+0.003, +0.049], so the
-    time information is worth having. Against the U-Net the interval is +0.043 [−0.011, +0.077]: one large
-    fire pulls it below zero, and by the rule written beforehand the U-Net stays.
+11. **Every clear date beats two median images, proven on a second test set.** A U-TAE (temporal
+    attention over each date and its day, 1.1M parameters, from scratch) reached IoU of burnt 0.815 on the
+    42 held-out fires against the median U-Net's 0.772; against the identical network fed two medians it
+    gains +0.031 [+0.003, +0.049], so the time information is worth having. But against the U-Net the
+    interval was +0.043 [−0.011, +0.077], so the U-Net stayed. On 44 new fires of 2026, later than every
+    training fire and labelled with ImpactMesh's own rule (reproduced exactly), U-TAE won with the whole
+    interval above zero (0.859 vs 0.838, +0.021 [+0.012, +0.035], better on 37 of 44 fires) and now draws
+    the burn map.
+12. **More sensors did not help, and an independent test changed the ranking.** The same U-TAE given
+    Sentinel-1 radar and elevation as well tied on the new fires (0.859) and was worse on the old ones
+    (0.722 against 0.815; the radar dates make it miss burnt land on four fires, for reasons not yet
+    understood). The published TerraMind-base-Fire (168M parameters, four dates of optical, radar and
+    elevation) leads on the data set's own held-out fires (0.864) but scores 0.835 on the new fires, below
+    our 1.1M-parameter U-TAE (−0.024 [−0.037, −0.010]). A score on a data set's own test split is not the
+    same as a score on new events.
 
 Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
 
@@ -151,18 +162,21 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 | vegetation loss that is not fire (clear-cutting, drought): no training labels yet | open |
 | yes/no thresholds: fitted thresholds and a logistic regression against the hand-set ones | done: hand-set kept |
 | a model that reads every clear date (U-TAE), tested for burnt land | done: best map (0.815 vs 0.772), not yet significant, U-Net kept |
-| every clear date for floods and construction; a second, newer set of fires | open |
+| a second, newer set of fires (CEMS 2026); radar and elevation for burnt land; TerraMind-base-Fire | done: U-TAE replaces the U-Net; radar not used |
+| why radar hurts on some fires; radar for fires under cloud | open |
+| every clear date for floods and construction | open |
 
 ## Repository
 
 ```text
 core/            satellite data access (STAC, COGs), cloud mask, time-series cube, measure_change
 core/models/     water detectors (U-Net, TerraMind), cloud detector (OmniCloudMask), change detectors (Siamese
-                 TerraMind for construction, U-Net for burnt land), all via ONNX
+                 TerraMind for construction, U-TAE on every clear date for burnt land), all via ONNX
 mcp_server/      MCP servers: measure_change, and the four step functions
 agents/          the chat agent (Claude Agent SDK), LangGraph workflow, model back ends
 experiments/     b1_* optical water, b2_* radar water, b3_* clouds, b4_* construction, b5_* burnt land,
-                 b6_* yes/no thresholds, b7_* every clear date: data copies, training, reports, exports
+                 b6_* yes/no thresholds, b7_* every clear date, b8_* fires of 2026 and radar: data copies,
+                 training, reports, exports
 eval/            the benchmarks (44 and 150 questions), reference pipeline, metrics
 examples/        chat.py: a conversation with the agent
 tests/           unit and integration tests
@@ -174,6 +188,7 @@ docs/            METHODS.md, figures
 ```bash
 python -m venv .venv && source .venv/bin/activate && pip install -e .     # pipeline (CPU)
 python -m venv .venv-ml && .venv-ml/bin/pip install -e ".[ml]"            # training (one GPU)
+python -m venv .venv-fire && .venv-fire/bin/pip install impactmesh==0.2.0 terratorch==1.2.14   # TerraMind-base-Fire only
 
 python -m pytest -q -m "not network"
 
@@ -183,6 +198,7 @@ python -m pytest -q -m "not network"
 .venv-ml/bin/python -m experiments.b3_export      # OmniCloudMask's published weights -> ONNX
 .venv-ml/bin/python -m experiments.b4_export --model terramind   # after training it (below)
 .venv-ml/bin/python -m experiments.b5_export --model unet        # after training it (below)
+.venv-ml/bin/python -m experiments.b8_export                     # U-TAE, the burn network in use (B7, below)
 
 # answer one question with fixed code (no language model)
 python -c "from core.measure import measure_change as m; \
@@ -236,6 +252,18 @@ python -m experiments.b6_exam && python -m experiments.b6_fit
 .venv-ml/bin/python -m core.data.impactmesh_ts
 .venv-ml/bin/python -m experiments.b7_train --all --slots 1,2,4,5,5,5 --batch 4 --accum 2
 .venv-ml/bin/python -m experiments.b7_report
+# fires of 2026: CEMS maps, patches and labels; image copies; radar and elevation; TerraMind-base-Fire's inputs
+python -m core.data.cems list && python -m core.data.cems download && python -m core.data.cems patches
+BURN_SOURCE=cems2026 .venv-ml/bin/python -m core.data.impactmesh_es && BURN_SOURCE=cems2026 .venv-ml/bin/python -m core.data.impactmesh_ts
+python -m core.data.burn_radar && BURN_SOURCE=cems2026 python -m core.data.burn_radar
+python -m core.data.tmfire_inputs build && .venv-fire/bin/python -m core.data.tmfire_inputs write
+BURN_SOURCE=cems2026 python -m core.data.tmfire_inputs build && BURN_SOURCE=cems2026 .venv-fire/bin/python -m core.data.tmfire_inputs write
+.venv-ml/bin/python -m experiments.b8_train --all --slots 1,2,4
+python -m experiments.b8_tmfire run heldout && python -m experiments.b8_tmfire check && python -m experiments.b8_tmfire run cems2026
+for m in unet utae utae_rd; do .venv-ml/bin/python -m experiments.b8_predict $m; done
+.venv-ml/bin/python -m experiments.b8_report
+.venv-ml/bin/python -m experiments.b8_export
+python -m experiments.b8_exam run burn-unet && python -m experiments.b8_exam run burn-utae && python -m experiments.b8_exam report
 ```
 
 ## Data, models and licences
@@ -248,6 +276,8 @@ python -m experiments.b6_exam && python -m experiments.b6_fit
 | Sen1Floods11 | Bonafilia et al. 2020, `gs://sen1floods11` | CC BY 4.0 |
 | OSCD | Daudt et al. 2018, [the authors' site](https://rcdaudt.github.io/oscd/) | labels CC BY-NC-SA: not redistributed here, nor networks trained on them |
 | ImpactMesh-Fire | IBM, DLR, ESA Φ-lab, Hugging Face `ibm-esa-geospatial/ImpactMesh-Fire` (version 1); labels from Copernicus Emergency Management Service maps | CC BY 4.0 |
+| Copernicus EMS rapid mapping (burnt-area maps of 2026, the new test set) | © European Union, Copernicus Emergency Management Service, [rapidmapping.emergency.copernicus.eu](https://rapidmapping.emergency.copernicus.eu); downloaded by `core/data/cems.py` | free use with this attribution; maps not redistributed here |
+| Copernicus DEM GLO-30 | © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA; via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/cop-dem-glo-30) | free use with this attribution |
 | CloudSEN12+ | Aybar et al. 2022, 2024, Hugging Face `tacofoundation/cloudsen12` | CC0 |
 | OmniCloudMask | Wright et al. 2025, `pip install omnicloudmask` (version 1.8.1, model version 4) | MIT |
 | Prithvi-EO-2.0 | NASA / IBM, Hugging Face `ibm-nasa-geospatial` | Apache-2.0 |

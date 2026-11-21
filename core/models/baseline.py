@@ -194,11 +194,24 @@ def detect_change_timeseries(
         missing = [k for k in BANDS7 if k not in ds]
         if missing:
             raise ValueError(f"change detector {change!r} needs bands {missing}; stack the cube with bands=BANDS7")
-        with np.errstate(all="ignore"), warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            mb = np.stack([np.nanmedian(wb[k].values, axis=0) for k in BANDS7])
-            ma = np.stack([np.nanmedian(wa[k].values, axis=0) for k in BANDS7])
-        changed = network_changed(mb, ma, change) & usable
+        from core.models.change import SERIES
+        if change in SERIES:  # every clear date (milestone B8)
+            from core.models.change import probability_series, select
+            xs, days, per = [], [], []
+            for k, w in enumerate((wb, wa)):
+                x = np.stack([w[b].values for b in BANDS7], axis=1)                    # (T, 7, H, W)
+                keep = select(np.isfinite(x[:, 2]).mean(axis=(1, 2)))          # red band, as in training
+                t = w.time.values.astype("datetime64[D]")[keep]
+                xs.append(x[keep])
+                days += [int((d - np.datetime64(after[0])).astype(int)) for d in t]
+                per += [k] * len(keep)
+            changed = (probability_series(np.concatenate(xs), np.array(days), np.array(per), change) > 0.5) & usable
+        else:
+            with np.errstate(all="ignore"), warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                mb = np.stack([np.nanmedian(wb[k].values, axis=0) for k in BANDS7])
+                ma = np.stack([np.nanmedian(wa[k].values, axis=0) for k in BANDS7])
+            changed = network_changed(mb, ma, change) & usable
 
     ib = spectral_indices(*(comp[k][0] for k in ("red", "green", "nir", "swir16")))
     ia = spectral_indices(*(comp[k][1] for k in ("red", "green", "nir", "swir16")))

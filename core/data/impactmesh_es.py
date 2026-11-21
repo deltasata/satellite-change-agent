@@ -29,6 +29,9 @@ or, for a dropped patch, only `dropped` and `usable_fraction`.
     python -m core.data.impactmesh_es download   # the labels and split lists (50 MB)
     .venv-ml/bin/python -m core.data.impactmesh_es   # all blocks, cloud masks on the GPUs (GPUS below)
     python -m core.data.impactmesh_es check      # alignment against ImpactMesh's own images (needs test/S2L2A.tar)
+
+With BURN_SOURCE=cems2026 the same code builds the B8 test set instead: the patches and labels of
+core/data/cems.py (CEMS maps of 2026), in data_cache/burn/cems/es/ (and ts/ for the per-date copy).
 """
 
 from __future__ import annotations
@@ -47,7 +50,8 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-DIR = Path(os.environ.get("EO_DATA_CACHE", ROOT / "data_cache")) / "burn" / "impactmesh"
+SOURCE = os.environ.get("BURN_SOURCE", "impactmesh")      # or "cems2026" (milestone B8)
+DIR = Path(os.environ.get("EO_DATA_CACHE", ROOT / "data_cache")) / "burn" / ("cems" if SOURCE == "cems2026" else "impactmesh")
 LABELS = DIR / "MASK"
 SPLITS = DIR / "split"
 OUT = DIR / "es"
@@ -84,6 +88,9 @@ def split_of() -> dict[str, str]:
 
 def patches() -> list[dict]:
     """Every labelled patch: name, fire (EMSR number), fire date, CRS, corner, part. Cached in patches.json."""
+    if SOURCE == "cems2026":
+        from core.data import cems
+        return cems.patches()
     f = DIR / "patches.json"
     if f.exists():
         return json.loads(f.read_text())
@@ -103,7 +110,7 @@ def patches() -> list[dict]:
 
 def used(p: dict) -> bool:
     """The patches B5 uses: training and validation without the excluded fires, and the held-out fires."""
-    return p["part"] == "test_holdout" or (p["part"] in ("train", "val") and p["fire"] not in EXCLUDED)
+    return p["part"] in ("test_holdout", "cems2026") or (p["part"] in ("train", "val") and p["fire"] not in EXCLUDED)
 
 
 def blocks() -> dict[str, list[dict]]:
@@ -124,6 +131,9 @@ def _blocks_cached() -> dict[str, list[dict]]:
 
 
 def label(name: str) -> np.ndarray:
+    if SOURCE == "cems2026":
+        from core.data import cems
+        return cems.label(name)
     import rasterio
     with rasterio.open(LABELS / f"{name}_annotation_wildfire.tif") as r:
         return r.read(1).astype(np.int8)

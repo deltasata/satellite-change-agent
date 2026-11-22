@@ -44,7 +44,16 @@ def test_periods_longer_than_120_days_are_refused():
                        before_end="2019-12-31", after_start="2021-06-01", after_end="2021-08-31")
 
 
+def _flood_networks_present() -> bool:
+    """The flood path needs the cloud networks (B3) and the water U-Net (B1) as ONNX files. They are made
+    from trained weights, which the public copy does not contain."""
+    from core.models import cloud, water
+    files = [cloud.MODELS / f"ocm_v4_{n}.onnx" for n in cloud.NETS] + [water.MODELS / "water_unet_ALL.onnx"]
+    return all(f.exists() for f in files)
+
+
 @pytest.mark.network
+@pytest.mark.skipif(not _flood_networks_present(), reason="cloud or water ONNX files not made (experiments/b1_export, b3_export)")
 def test_conselice_flood_is_measured_yes():
     r = measure_change(lat=44.5063, lon=11.8276, kind="flood", event_date="2023-05-23")
     assert r.answer == "yes" and r.before_period == ["2023-03-24", "2023-05-13"] and r.figure

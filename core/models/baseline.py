@@ -211,7 +211,11 @@ def detect_change_timeseries(
                 warnings.simplefilter("ignore")
                 mb = np.stack([np.nanmedian(wb[k].values, axis=0) for k in BANDS7])
                 ma = np.stack([np.nanmedian(wa[k].values, axis=0) for k in BANDS7])
-            changed = network_changed(mb, ma, change) & usable
+            from core.models.change import WATER_SUFFIX
+            changed = network_changed(mb, ma, change.replace(WATER_SUFFIX, "")) & usable
+            if WATER_SUFFIX in change:  # milestone B9: water in the after image is not construction
+                from core.models.water import water_mask
+                changed &= ~water_mask(ma, "unet")
 
     ib = spectral_indices(*(comp[k][0] for k in ("red", "green", "nir", "swir16")))
     ia = spectral_indices(*(comp[k][1] for k in ("red", "green", "nir", "swir16")))

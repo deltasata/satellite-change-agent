@@ -35,7 +35,9 @@ NAMES = {"rule": "change rule: ratio to the before scatter above 4",
          "fsd": "FC-Siam-diff (milestone B4)", "terramind": "TerraMind-1.0-base, Siamese (milestone B4)",
          "burn-unet": "U-Net, burnt pixels (milestone B5)",
          "burn-terramind": "TerraMind-1.0-base, Siamese, burnt pixels (milestone B5)",
-         "burn-utae": "U-TAE on every clear date, burnt pixels (milestones B7, B8)"}
+         "burn-utae": "U-TAE on every clear date, burnt pixels (milestones B7, B8)",
+         "terramind+water": "TerraMind-1.0-base, Siamese (milestone B4), minus the water of the after image (B9)"}
+WATER_SUFFIX = "+water"            # B9: remove the water network's water in the after image from the change map
 SERIES = {"burn-utae"}            # networks that see every clear date, not two medians
 MIN_CLEAR, MAX_PER_PERIOD = 0.01, 12
 CROP, STRIDE = 224, 144

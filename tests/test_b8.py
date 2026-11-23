@@ -87,3 +87,12 @@ def test_pipeline_burn_detector_takes_no_radar():
     assert change.MEAN.shape[0] == 7                                     # 7 optical bands
     src = inspect.getsource(change.probability_series)
     assert "burn_radar" not in src and "dem" not in src.lower()
+
+
+def test_construction_detector_removes_water():
+    """B9 avenue 1: the construction detector is B4's network minus the water of the after image; the suffix is
+    stripped before the network files are looked up."""
+    from core.measure import CHANGE_DETECTOR
+    from core.models.change import NAMES, WATER_SUFFIX, _parse
+    assert CHANGE_DETECTOR == "terramind" + WATER_SUFFIX and CHANGE_DETECTOR in NAMES
+    assert _parse((CHANGE_DETECTOR + "-without-paris_bercy").replace(WATER_SUFFIX, "")) == ("terramind", "paris_bercy")

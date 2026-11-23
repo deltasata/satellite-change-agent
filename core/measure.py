@@ -46,7 +46,13 @@ CLOUD_DETECTOR = "ocm"
 # time (IoU of "changed" 0.301 against 0.188, +0.114, interval +0.052..+0.180). On exam v2 the answers did not become worse
 # (0.860 -> 0.860), and on the 78 flood questions asked as construction questions it gave 21 false "yes"
 # instead of 25 (interval of the difference includes zero).
-CHANGE_DETECTOR = "terramind"
+# Milestone B9, avenue 1 (22 November 2026), protocol in docs/METHODS.md section 12: the same network's map minus
+# the pixels the water network (B1) sees as water in the after image. On the 78 flood questions asked as
+# construction questions, false "yes" fell from 21 to 6 (-0.192, interval -0.333..-0.072; each flood event
+# scored with a water network that never saw it); urban change on OSCD unchanged (IoU 0.304 against 0.301,
+# +0.003, interval -0.007..+0.017; allowed loss 0.03); exam: one answer fewer right (the GERD reservoir, an
+# "any change" question where new water is the change), within the allowed 1.
+CHANGE_DETECTOR = "terramind+water"
 # Which pixels lost vegetation (burnt), for "vegetation loss" questions. Milestone B5, protocol in
 # docs/METHODS.md section 8: a U-Net trained from nothing on ImpactMesh-Fire (CEMS burnt-area labels, our
 # own Earth Search median images, fires near exam fires left out) beat the rule on 42 held-out fires (IoU of

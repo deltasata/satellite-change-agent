@@ -19,6 +19,7 @@ from a cluster bootstrap over events or places.
 | which pixels changed through construction (OSCD, 24 cities) | change / noise > 4: 0.188 IoU | **TerraMind-1.0, Siamese, fine-tuned: 0.301** | +0.114 [+0.052, +0.180] |
 | which pixels burnt (ImpactMesh-Fire, 42 fires) | change / noise > 4: 0.050 IoU | **U-Net: 0.772** (dNBR fitted: 0.560) | +0.722 [+0.671, +0.773] |
 | which pixels burnt, 44 new fires of 2026 (later than all training) | the U-Net above: 0.838 IoU | **U-TAE on every clear date: 0.859** | +0.021 [+0.012, +0.035] |
+| flooded places wrongly called construction (78 benchmark floods) | the construction network above: 21 | **minus the water network's water: 6** | −0.192 [−0.333, −0.072] |
 
 With the new cloud mask, the whole benchmark (150 questions) went from 0.853 to 0.860 (+0.007
 [−0.015, +0.029]); with the new change detector it stayed at 0.860; with the new burn detector it rose to
@@ -145,6 +146,14 @@ flowchart LR
     elevation) leads on the data set's own held-out fires (0.864) but scores 0.835 on the new fires, below
     our 1.1M-parameter U-TAE (−0.024 [−0.037, −0.010]). A score on a data set's own test split is not the
     same as a score on new events.
+13. **More data helped only when it meant the same thing as the test labels.** An independent review of
+    the whole project proposed three improvements, each tested under a protocol written in advance:
+    - **Adopted:** removing the water network's water from the construction map cut false "yes" on flooded
+      land from 21 to 6 of 78, with urban change unchanged (0.304 vs 0.301).
+    - **SpaceNet 7** (new buildings in 60 places) lowered urban change to 0.222.
+    - **MMFlood** (92 more flood events, emergency outlines) lowered radar water to 0.568 from 0.611.
+    - In both failures the added labels were narrower than the test's, and the network became more
+      cautious: more precise, but missing more.
 
 Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
 
@@ -157,7 +166,8 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 | comparison with published Sen1Floods11 numbers (official split) | done: on par (within 0.01) |
 | cloud mask: OmniCloudMask replaces ESA scene classification | done |
 | construction: Siamese TerraMind replaces the change rule (OSCD, located and re-read as Level-2A) | done |
-| flood areas still called construction (21 of 78): combine with the water map, or train with flood examples | open |
+| flood areas still called construction (21 of 78): combine with the water map, or train with flood examples | done: water removed, 21 → 6 |
+| more training labels: SpaceNet 7 (urban change), MMFlood (radar water) | done: both made the networks more cautious; not adopted |
 | burn scars: U-Net replaces the change rule (ImpactMesh-Fire, re-read as Earth Search median images) | done |
 | vegetation loss that is not fire (clear-cutting, drought): no training labels yet | open |
 | yes/no thresholds: fitted thresholds and a logistic regression against the hand-set ones | done: hand-set kept |
@@ -175,8 +185,8 @@ core/models/     water detectors (U-Net, TerraMind), cloud detector (OmniCloudMa
 mcp_server/      MCP servers: measure_change, and the four step functions
 agents/          the chat agent (Claude Agent SDK), LangGraph workflow, model back ends
 experiments/     b1_* optical water, b2_* radar water, b3_* clouds, b4_* construction, b5_* burnt land,
-                 b6_* yes/no thresholds, b7_* every clear date, b8_* fires of 2026 and radar: data copies,
-                 training, reports, exports
+                 b6_* yes/no thresholds, b7_* every clear date, b8_* fires of 2026 and radar,
+                 b9_* flooded land, SpaceNet 7, MMFlood: data copies, training, reports, exports
 eval/            the benchmarks (44 and 150 questions), reference pipeline, metrics
 examples/        chat.py: a conversation with the agent
 tests/           unit and integration tests
@@ -264,6 +274,15 @@ for m in unet utae utae_rd; do .venv-ml/bin/python -m experiments.b8_predict $m;
 .venv-ml/bin/python -m experiments.b8_report
 .venv-ml/bin/python -m experiments.b8_export
 python -m experiments.b8_exam run burn-unet && python -m experiments.b8_exam run burn-utae && python -m experiments.b8_exam report
+# three ideas from an independent review: flooded land (1), SpaceNet 7 (2), MMFlood (3)
+python -m experiments.b9_flood_data partc && python -m experiments.b9_flood_data chips
+.venv-ml/bin/python -m experiments.b9_report ref && .venv-ml/bin/python -m experiments.b9_train --all --gpus 1,2,4,5
+python -m experiments.b9_report
+python -m core.data.spacenet7 labels && python -m core.data.spacenet7 && python -m experiments.b9_sn7_inputs
+.venv-ml/bin/python -m experiments.b9_train --all --gpus 1,2,4,5 --model s,sn && python -m experiments.b9_report2
+python -m core.data.mmflood_s1rtc && .venv-ml/bin/python -m experiments.b9_radar_train prep
+.venv-ml/bin/python -m experiments.b9_radar_train --all --gpus 1,2,4,5 && .venv-ml/bin/python -m experiments.b9_report3
+python -m experiments.b4_exam run terramind+water B && python -m experiments.b4_exam run terramind+water C
 ```
 
 ## Data, models and licences
@@ -278,6 +297,9 @@ python -m experiments.b8_exam run burn-unet && python -m experiments.b8_exam run
 | ImpactMesh-Fire | IBM, DLR, ESA Φ-lab, Hugging Face `ibm-esa-geospatial/ImpactMesh-Fire` (version 1); labels from Copernicus Emergency Management Service maps | CC BY 4.0 |
 | Copernicus EMS rapid mapping (burnt-area maps of 2026, the new test set) | © European Union, Copernicus Emergency Management Service, [rapidmapping.emergency.copernicus.eu](https://rapidmapping.emergency.copernicus.eu); downloaded by `core/data/cems.py` | free use with this attribution; maps not redistributed here |
 | Copernicus DEM GLO-30 | © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA; via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/cop-dem-glo-30) | free use with this attribution |
+| SpaceNet 7 (Van Etten et al. 2021) | building outlines, 60 areas; [AWS open data](https://registry.opendata.aws/spacenet/) | CC BY-SA 4.0 (not redistributed) |
+| MMFlood (Montello et al. 2022) | flood masks of 95 events; [Zenodo 6534637](https://zenodo.org/records/6534637) | CC BY 4.0 (not redistributed) |
+| JRC Global Surface Water (Pekel et al. 2016) | permanent water for MMFlood's labels; via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/jrc-gsw) | free use with attribution |
 | CloudSEN12+ | Aybar et al. 2022, 2024, Hugging Face `tacofoundation/cloudsen12` | CC0 |
 | OmniCloudMask | Wright et al. 2025, `pip install omnicloudmask` (version 1.8.1, model version 4) | MIT |
 | Prithvi-EO-2.0 | NASA / IBM, Hugging Face `ibm-nasa-geospatial` | Apache-2.0 |

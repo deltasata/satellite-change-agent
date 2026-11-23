@@ -14,9 +14,10 @@ Every learned component in this system had to beat the rule it replaces, under a
 - [9. From a map to yes or no](#9-from-a-map-to-yes-or-no)
 - [10. Every clear date instead of two medians](#10-every-clear-date-instead-of-two-medians)
 - [11. A second test: fires of 2026, and radar](#11-a-second-test-fires-of-2026-and-radar)
-- [12. Comparison with published Sen1Floods11 results](#12-comparison-with-published-sen1floods11-results)
-- [13. The agent benchmark](#13-the-agent-benchmark)
-- [14. Limits](#14-limits)
+- [12. An independent review, and three ideas tested](#12-an-independent-review-and-three-ideas-tested)
+- [13. Comparison with published Sen1Floods11 results](#13-comparison-with-published-sen1floods11-results)
+- [14. The agent benchmark](#14-the-agent-benchmark)
+- [15. Limits](#15-limits)
 
 ## 1. Principle: a model replaces a rule only if it wins
 
@@ -498,7 +499,61 @@ flatter a model fine-tuned on them was not tested.
 *Left: each detector on the 42 held-out fires and on the 44 new fires. Right: one dot per new fire, the
 U-Net's IoU against U-TAE's.*
 
-## 12. Comparison with published Sen1Floods11 results
+## 12. An independent review, and three ideas tested
+
+After section 11, a separate reviewer read every record of the project and named the three changes most
+likely to improve the measured results. Each was tested under a protocol written before its first score.
+From the review, every protocol also stated two things in advance:
+- **the smallest gain it could detect;**
+- **a margin for "not worse":** a fixed loss allowed, instead of "the interval is not wholly below zero".
+
+**1. Flooded land is not construction (adopted).**
+- *The problem:* the construction network (section 7) was trained on OSCD, which has no floods. Asked
+  "was there construction?" about the benchmark's 78 flooded places, it said "yes" 21 times.
+- *Three candidates:*
+  - **W:** remove from its map the pixels that the water network (section 3) sees as water in the after
+    image;
+  - **N:** retrain it with 220 flooded places labelled "no change". They were recorded through the real
+    pipeline at Sen1Floods11's chips; each flood event was scored by networks that never saw it;
+  - **N+W:** both.
+
+| detector | false "yes" (of 78) | minus the network [95 %] | OSCD urban change (IoU) | minus the network [95 %] |
+|---|---|---|---|---|
+| construction network (section 7) | 21 | | 0.301 | |
+| **W: water removed** | **6** | **−0.192 [−0.333, −0.072]** | **0.304** | **+0.003 [−0.007, +0.017]** |
+| N: flooded places as "no change" | 1 | −0.256 [−0.429, −0.112] | 0.294 | −0.008 [−0.031, +0.019] |
+| N+W | 0 | −0.269 [−0.441, −0.121] | 0.291 | −0.011 [−0.034, +0.016] |
+
+- **W passes and was adopted.** It is the only candidate within the urban-change margin (lower end
+  ≥ −0.03).
+- **N learnt what a flood looks like** from other floods, but it also became more cautious about real
+  construction: Las Vegas −0.075, land made from the sea in Beihai −0.046. It missed the margin by 0.001.
+- **In the benchmark,** W lost one answer, within the 1 allowed: a filling reservoir asked as "did the
+  land or water surface change?", where new water is the change.
+
+**2. More urban-change labels from SpaceNet 7 (not adopted).**
+- *What was added:* buildings new between the first and last month of SpaceNet 7's 60 areas (hand-drawn
+  outlines, 2017-2020), read onto Sentinel-2's grid. The outlines and the 10 m grid agree to well under a
+  pixel.
+- *Result:* urban change fell from 0.304 to 0.222 (−0.082 [−0.136, −0.036]), and to 0.204 with the
+  flooded places added as well.
+- *Why:* SpaceNet 7 marks new buildings, OSCD all urban change. The network learnt the narrower meaning
+  (recall 0.375 → 0.24).
+
+**3. Radar water from 92 more flood events (not adopted).**
+- *What was added:* MMFlood's flood maps (Copernicus emergency service outlines, 2014-2021), re-read as
+  Planetary Computer RTC radar on their own grid. The copy agrees with MMFlood's own radar (VH correlation
+  0.945 after a 9 × 9 average). Permanent water came from JRC Global Surface Water, so that "water" means
+  what it means in Sen1Floods11. Events that coincide with a Sen1Floods11 event were removed.
+- *Result:* water IoU on Sen1Floods11's events fell from 0.611 to 0.568 (−0.043 [−0.076, −0.014]), with
+  precision up and recall down (0.72 → 0.62).
+- *Why:* the emergency outlines mark less water than hand labels do.
+
+**What this shows.** More data helped only where it meant the same thing as the test labels. Twice, a
+larger but narrower label set made the network more cautious, and both losses were certain. The cheapest
+idea, with no new training at all, was the one that won.
+
+## 13. Comparison with published Sen1Floods11 results
 
 Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
 optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
@@ -529,7 +584,7 @@ flood never seen, in the pipeline's own image formats), not from weak training. 
 optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
 keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
-## 13. The agent benchmark
+## 14. The agent benchmark
 
 `eval/benchmark.jsonl` (44 questions) and `eval/benchmark_v2.jsonl` (150): flood questions from
 Sen1Floods11 labels, construction and wildfire sites with verified dates, stable control sites, and
@@ -549,7 +604,7 @@ The final design follows from this: Claude holds the conversation, **all measure
 deterministic function** (`measure_change`), and two checks in code verify that the reply's answer and
 every number in it come from that function's results.
 
-## 14. Limits
+## 15. Limits
 
 - 10 flood events give wide intervals; the radar U-Net's gain is not significant (interval touches 0).
 - One seed per model in the optical comparison; three in the radar comparison.
@@ -559,8 +614,9 @@ every number in it come from that function's results.
 - Radar answers have no evidence figure yet.
 - Thin cloud stays hard for every cloud detector (IoU 0.54 at best). The cloud U-Net was trained for a
   fixed 20 epochs and may be undertrained.
-- OSCD has 24 cities and only urban change: the change network has never been shown a flood labelled "no
-  change", and still answers a false "yes" on 21 of 78 flooded areas asked about construction.
+- OSCD has 24 cities and only urban change. Removing the water network's water (section 12) brought the
+  false "yes" on flooded areas asked about construction from 21 to 6 of 78; the remaining 6 are floods
+  whose change is not open water. A filling reservoir asked as "any change" now counts as no change.
 - The change network is trained on Planetary Computer's Level-2A images and used on Earth Search's. The
   end-to-end tests ran on Earth Search and did not get worse, but there are no pixel labels there.
 - The benchmark could gain at most one construction answer (the rule already got 44 of 45); the change

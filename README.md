@@ -1,37 +1,39 @@
 # satellite-change-agent
 
 **Ask a question about any place on Earth in plain language: "Was this town flooded after the storm?",
-"Was there new construction here since 2022?" The system finds free satellite images, measures the
-change, and answers yes / no / cannot tell, with the numbers and an evidence figure.**
+"Did a wildfire burn here in January?", "Was there new construction here since 2022?" The system finds free
+satellite images, measures the change, and answers yes / no / cannot tell, with the numbers and an
+evidence figure.**
 
-Every learned model in the answer path had to **beat the rule it replaces**, under a protocol fixed
-**before any score was computed**, on **flood events or places it had never seen**, with intervals
-from a cluster bootstrap over events or places.
+**[Try it live](https://deltasata.github.io/eo/)**: type a question or pick a point on a map. When the
+server is off, recorded runs play instead.
 
-![results](docs/figures/results.png)
+[![A burn scar mapped by the trained network and checked against the official map](https://deltasata.github.io/eo/media/compare_burn_poster.jpg)](https://deltasata.github.io/eo/)
 
-| step | rule (or model) it replaced | learned model adopted | gain [95 % interval] |
-|---|---|---|---|
-| which pixels are water, optical (Sentinel-2) | NDWI > 0: 0.690 IoU | **U-Net: 0.833** | +0.143 [+0.083, +0.219] |
-| which pixels are water, radar (Sentinel-1, sees through cloud) | VH < t: 0.477 IoU | **TerraMind-1.0, fine-tuned: 0.611** | +0.134 [+0.090, +0.192] |
-| flood questions answered correctly (72), end to end | optical images only: 0.722 | **optical U-Net + radar TerraMind when cloudy: 0.889** | +0.167 [+0.031, +0.346] |
-| which pixels are cloud or cloud shadow (953 expert-labelled images) | ESA scene classification: 0.644 IoU | **OmniCloudMask, used as published: 0.885** | +0.241 [+0.221, +0.261] |
-| which pixels changed through construction (OSCD, 24 cities) | change / noise > 4: 0.188 IoU | **TerraMind-1.0, Siamese, fine-tuned: 0.301** | +0.114 [+0.052, +0.180] |
-| which pixels burnt (ImpactMesh-Fire, 42 fires) | change / noise > 4: 0.050 IoU | **U-Net: 0.772** (dNBR fitted: 0.560) | +0.722 [+0.671, +0.773] |
-| which pixels burnt, 44 new fires of 2026 (later than all training) | the U-Net above: 0.838 IoU | **U-TAE on every clear date: 0.859** | +0.021 [+0.012, +0.035] |
-| flooded places wrongly called construction (78 benchmark floods) | the construction network above: 21 | **minus the water network's water: 6** | −0.192 [−0.333, −0.072] |
-| wildfire questions answered correctly (228, 55 fires): which images | flood periods: 0.855 | **8 nearest images each side, within the training limits: 0.996** | +0.140 [+0.076, +0.221] |
+*A wildfire in the Landes forest, south-west France (August 2026), mapped from Sentinel-2 images by the trained network and
+checked against the official Copernicus emergency map: yellow = burnt and found, pink = false alarm,
+blue = missed. Click for the live page and the moving comparison with the standard burn index.*
 
-With the new cloud mask, the whole benchmark (150 questions) went from 0.853 to 0.860 (+0.007
-[−0.015, +0.029]); with the new change detector it stayed at 0.860; with the new burn detector it rose to
-0.887 (+0.027 [+0.006, +0.059]; all 13 wildfire questions right, against 9), and stayed there when U-TAE
-replaced the U-Net. Removing the water from the construction map cost one answer, a filling reservoir asked
-as "any change" (0.880). The choice of fire images left it unchanged, because the benchmark's questions
-carry their own periods. Not worse was the condition
-for adopting each. The last step, from a map to yes or no, kept its hand-set thresholds: thresholds fitted
-on the benchmark (leaving one of its 83 groups out) and a logistic regression did not beat them. Asked "was there new construction?" about 78 flooded areas, the change detector answers
-a false "yes" 21 times, against 25 for the rule it replaced; on 570 unburnt patches next to fires, the burn
-detector says "yes" 3.9 % of the time, against 5.1 %.
+## Three results
+
+1. **Floods under cloud are answered with radar, which sees through cloud.** A trained water network on
+   the optical images plus a fine-tuned TerraMind network on Sentinel-1 radar raised the share of flood
+   questions answered correctly from 0.722 (optical images only) to 0.889. The 95 % interval of the gain
+   is +0.031 to +0.346, from resampling whole flood events.
+2. **A 1.1-million-parameter network beat the published 168-million-parameter TerraMind-base-Fire** on 44
+   wildfires that happened after all of its training data: overlap of the burnt area 0.859 against 0.835
+   (difference −0.024 [−0.037, −0.010] for the larger model). *Overlap* (IoU, intersection over union) is
+   the area that the predicted and the true maps share, divided by the area that either covers: 1 is
+   perfect, 0 is no overlap.
+3. **The language model never measures.** It only reads the question and writes the reply. All
+   measurement is one fixed function, and code checks that every number in a reply comes from that
+   function's output.
+
+**How the models were chosen.** Every learned model had to beat the simple rule it replaces (a
+threshold on a band ratio, for example) on flood events or places it had never seen. The test and its
+pass mark were written down **before any score was computed**, and the 95 % intervals come from
+resampling whole events. Several promising ideas failed this test and were not used. Details:
+**[docs/METHODS.md](docs/METHODS.md)**.
 
 ## What it does
 
@@ -54,6 +56,41 @@ Agent   No: 1.0 % of the area changed (threshold 3 %).
 *The conversation is shortened; every number in it is what `measure_change` returns for these inputs.*
 
 ![evidence](docs/figures/conselice_flood.png)
+
+## Results in detail
+
+![results](docs/figures/results.png)
+
+| step | rule (or model) it replaced | learned model adopted | gain [95 % interval] |
+|---|---|---|---|
+| which pixels are water, optical (Sentinel-2) | NDWI > 0: 0.690 IoU | **U-Net: 0.833** | +0.143 [+0.083, +0.219] |
+| which pixels are water, radar (Sentinel-1, sees through cloud) | VH < t: 0.477 IoU | **TerraMind-1.0, fine-tuned: 0.611** | +0.134 [+0.090, +0.192] |
+| flood questions answered correctly (72), end to end | optical images only: 0.722 | **optical U-Net + radar TerraMind when cloudy: 0.889** | +0.167 [+0.031, +0.346] |
+| which pixels are cloud or cloud shadow (953 expert-labelled images) | ESA scene classification: 0.644 IoU | **OmniCloudMask, used as published: 0.885** | +0.241 [+0.221, +0.261] |
+| which pixels changed through construction (OSCD, 24 cities) | change / noise > 4: 0.188 IoU | **TerraMind-1.0, Siamese, fine-tuned: 0.301** | +0.114 [+0.052, +0.180] |
+| which pixels burnt (ImpactMesh-Fire, 42 fires) | change / noise > 4: 0.050 IoU | **U-Net: 0.772** (dNBR fitted: 0.560) | +0.722 [+0.671, +0.773] |
+| which pixels burnt, 44 new fires of 2026 (later than all training) | the U-Net above: 0.838 IoU | **U-TAE on every clear date: 0.859** | +0.021 [+0.012, +0.035] |
+| flooded places wrongly called construction (78 benchmark floods) | the construction network above: 21 of 78 | **minus the water network's water: 6 of 78** | 15 fewer (share −0.192 [−0.333, −0.072]) |
+
+With the new cloud mask, the whole benchmark (150 questions) went from 0.853 to 0.860 (+0.007
+[−0.015, +0.029]); with the new change detector it stayed at 0.860; with the new burn detector it rose to
+0.887 (+0.027 [+0.006, +0.059]; all 13 wildfire questions right, against 9), and stayed there when U-TAE
+replaced the U-Net. Removing the water from the construction map cost one answer (0.880): a dam's
+reservoir that filled, asked as "did anything change?", now counts as no change, because new water is no
+longer counted as construction. The choice of fire images left the benchmark unchanged, because its
+questions carry their own periods. For each adoption the condition was that the benchmark did not get
+worse. The last step, from a map to yes or no, kept its hand-set thresholds: thresholds fitted
+on the benchmark (leaving one of its 83 groups out) and a logistic regression did not beat them. Asked "was there new construction?" about 78 flooded areas, the change detector answers
+a false "yes" 21 times, against 25 for the rule it replaced; on 570 unburnt patches next to fires, the burn
+detector says "yes" 3.9 % of the time, against 5.1 %.
+
+*Terms in the table:* VV and VH are the two polarisations of the Sentinel-1 radar (VH < t: water where the
+VH echo is below a threshold t). NDWI and MNDWI are water indices from two Sentinel-2 bands; dNBR is the
+standard burn index. U-TAE is a network that reads every clear image in a period, not two average images.
+OSCD is the public data set of urban change in 24 cities. For construction, an overlap of 0.301 sounds
+low, but change maps are hard: the same network scores F1 0.46 (F1 is another overlap measure, always
+higher than IoU for the same map), and the published results on OSCD's own test cities are F1 0.4-0.6,
+in a setup that differs from ours.
 
 ## How it works
 
@@ -163,7 +200,8 @@ flowchart LR
     on images from a week to three months after a fire. Taking, on each side, the 8 images nearest the
     fire that are at least 10 % cloud-free, within the training limits, raised the right answers on 228
     fire questions from 0.855 to 0.996 (+0.140 [+0.076, +0.221]), with no "cannot tell" left. The month
-    questions went from 8 of 13 to 13 of 13.
+    questions went from 8 of 13 to 13 of 13. (The 2026 fires had already served one earlier test, of
+    the burn network; see the Limits in METHODS.)
 
 Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
 

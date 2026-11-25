@@ -82,6 +82,7 @@ FIRE_PERIODS = {"normal": ((-60, -3), (7, 60)), "wide": ((-120, -3), (7, 90))}  
 NEAREST_N, NEAREST_MIN_CLEAR = 8, 0.10
 
 Kind = Literal["flood", "construction", "vegetation_loss"]
+KIND_WORDS = {"flood": "flood", "construction": "new construction", "vegetation_loss": "burnt or cleared vegetation"}
 
 
 def event_periods(d: date, wider: bool = False) -> tuple[tuple[date, date], tuple[date, date]]:
@@ -253,7 +254,7 @@ def _fire_measure(x: MeasureInput, out: dict, steps: list[str], area: dict, band
                                   f"mask could hide a change or fake one")
                 steps.append("caution: " + out["caution"])
             out["sensor"] = "optical"
-            out["figure"] = tools.render_evidence(c.result_id, f"{x.kind} at {x.lat:.4f}, {x.lon:.4f}").path
+            out["figure"] = tools.render_evidence(c.result_id, f"{KIND_WORDS[x.kind]} at {x.lat:.4f}, {x.lon:.4f}", cloud=cloud).path
             return MeasureResult(**out)
     return MeasureResult(**out)
 
@@ -342,7 +343,7 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
         out.update(answer=ans, rule=rule, reason=None if c.status == "ok" else rule)
         if c.status == "ok":
             out["sensor"] = "optical"
-            out["figure"] = tools.render_evidence(c.result_id, f"{x.kind} at {x.lat:.4f}, {x.lon:.4f}").path
+            out["figure"] = tools.render_evidence(c.result_id, f"{KIND_WORDS[x.kind]} at {x.lat:.4f}, {x.lon:.4f}", cloud=cloud).path
             return MeasureResult(**out)
         if may_widen and not wider:
             steps.append("too few clear images -> one retry with wider periods")

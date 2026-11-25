@@ -15,13 +15,14 @@ Every learned component in this system had to beat the rule it replaces, under a
 - [10. Every clear date instead of two medians](#10-every-clear-date-instead-of-two-medians)
 - [11. A second test: fires of 2026, and radar](#11-a-second-test-fires-of-2026-and-radar)
 - [12. An independent review, and three ideas tested](#12-an-independent-review-and-three-ideas-tested)
-- [13. Comparison with published Sen1Floods11 results](#13-comparison-with-published-sen1floods11-results)
-- [14. The agent benchmark](#14-the-agent-benchmark)
-- [15. Limits](#15-limits)
+- [13. Which images a fire question uses](#13-which-images-a-fire-question-uses)
+- [14. Comparison with published Sen1Floods11 results](#14-comparison-with-published-sen1floods11-results)
+- [15. The agent benchmark](#15-the-agent-benchmark)
+- [16. Limits](#16-limits)
 
 ## 1. Principle: a model replaces a rule only if it wins
 
-1. **Test data fixed in advance, used once.** No training, setting or threshold is chosen on them.
+1. **Test data fixed in advance.** No training, setting or threshold is chosen on them. Each test set decides one question; the one set used for a second question (the 2026 fires, sections 11 and 13) is named in the Limits (section 16).
 2. **One main number per step, chosen in advance.** For pixel maps: the IoU (intersection over union)
    of the class that matters, pooled over all test pixels: IoU = ΣTP / (ΣTP + ΣFP + ΣFN). For the answer
    path: accuracy of the final yes / no / cannot-tell answer.

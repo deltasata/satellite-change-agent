@@ -300,7 +300,7 @@ class EvidenceOutput(BaseModel):
     description: str
 
 
-def render_evidence(result_id: str, title: str = "") -> EvidenceOutput:
+def render_evidence(result_id: str, title: str = "", cloud: str | None = None) -> EvidenceOutput:
     """Write the evidence figure (before / after / change map / timeline) for a detect_change result."""
     from core.evidence import render_evidence as _render
 
@@ -311,7 +311,8 @@ def render_evidence(result_id: str, title: str = "") -> EvidenceOutput:
     ds, wb, wa = _combined(*saved["_cubes"])
     r = detect_change_timeseries(ds, wb, wa, water=saved.get("_water", "ndwi"), change=saved.get("_change", "rule"))
     path = _root() / "evidence" / f"{result_id}.png"
-    _render(ds, r, wb, wa, path, title or f"result {result_id}")
+    _render(ds, r, wb, wa, path, title or f"result {result_id}", water=saved.get("_water", "ndwi"),
+            change=saved.get("_change", "rule"), cloud=cloud or "scl")
     return EvidenceOutput(path=str(path), description=(
         "before and after true-colour composites, changed pixels in orange, and the "
         "cloud-free fraction of every acquisition with both windows shaded"))

@@ -1,7 +1,7 @@
 """Draw docs/figures/results.png: every learned model against the rule it had to beat.
 
 The numbers are the measured results (runs/b1/report.json, runs/b2/report_A.json, runs/b2/report_C.json,
-runs/b3/report_A.json, runs/b4/report_A.json, runs/b5/report_A.json);
+runs/b3/report_A.json, runs/b4/report_A.json, runs/b5/report_A.json, runs/b7/report_A.json, runs/b8/report.json);
 they are written here so that the figure can be redrawn without the 10 GB of intermediate files.
 
     python scripts/make_figures.py
@@ -59,8 +59,9 @@ PANELS = [
         ("dNBR > t, t fitted", 0.560, "rule"),
         ("Prithvi-EO-2.0 BurnScars, as published", 0.483, "model"),
         ("TerraMind-1.0-base, Siamese (7x larger)", 0.793, "model"),
-        ("U-Net, trained from scratch", 0.772, "adopted"),
-    ], "+0.722 [+0.671, +0.773]\nover the rule"),
+        ("U-Net, trained from scratch", 0.772, "model"),
+        ("U-TAE, every clear date", 0.815, "adopted"),
+    ], "U-TAE, after a second test on\n44 newer fires: +0.021 [+0.012, +0.035] over the U-Net"),
 ]
 
 

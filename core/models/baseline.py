@@ -227,8 +227,9 @@ def detect_change_timeseries(
         deltas[f"delta_{k}_changed_median"] = float(np.nanmedian(d[changed])) if changed.any() else 0.0
         deltas[f"delta_{k}_all_median"] = float(np.nanmedian(d[usable]))
     if water == "ndwi":
-        water_before = float(np.nanmean(ib["ndwi"][usable] > 0))
-        water_after = float(np.nanmean(ia["ndwi"][usable] > 0))
+        wmb, wma = ib["ndwi"] > 0, ia["ndwi"] > 0
+        water_before = float(np.nanmean(wmb[usable]))
+        water_after = float(np.nanmean(wma[usable]))
     else:  # a trained water detector (milestone B1) on 7-band median composites
         from core.models.water import BANDS7, water_mask
         missing = [k for k in BANDS7 if k not in ds]
@@ -238,8 +239,9 @@ def detect_change_timeseries(
             warnings.simplefilter("ignore")  # all-NaN pixels give NaN medians; they are outside `usable`
             cb = np.stack([np.nanmedian(wb[k].values, axis=0) for k in BANDS7])
             ca = np.stack([np.nanmedian(wa[k].values, axis=0) for k in BANDS7])
-        water_before = float(water_mask(cb, water)[usable].mean())
-        water_after = float(water_mask(ca, water)[usable].mean())
+        wmb, wma = water_mask(cb, water), water_mask(ca, water)
+        water_before = float(wmb[usable].mean())
+        water_after = float(wma[usable].mean())
 
     return {
         "status": "ok",
@@ -253,5 +255,6 @@ def detect_change_timeseries(
         **deltas,
         "_score": score,  # maps: leading underscore = not for the LLM / JSON
         "_changed": changed,
+        "_new_water": np.asarray(wma & ~wmb & usable),
         "_composites": comp,
     }

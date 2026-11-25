@@ -45,9 +45,21 @@ def render_evidence(
     after: tuple[date, date],
     out_path: str | Path,
     title: str = "",
+    water: str = "ndwi",
+    change: str = "rule",
+    cloud: str = "scl",
 ) -> Path:
     """Write the evidence PNG and return its path. `result` comes from
-    core.models.baseline.detect_change_timeseries."""
+    core.models.baseline.detect_change_timeseries; `water`, `change` and `cloud` name the detectors that
+    made it, so that the third panel and the footnote show what the answer was actually based on: new water
+    for a flood question (a trained water detector), otherwise the changed pixels of the change detector."""
+    import re
+
+    from core.models.change import NAMES as CHANGE_NAMES
+    from core.models.water import NAMES as WATER_NAMES
+
+    def plain(name: str) -> str:        # visitors see the method, not our milestone labels
+        return re.sub(r"\s*\((milestones?|B\d)[^)]*\)", "", name)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.rcParams.update({"font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor": INK_2,
@@ -70,11 +82,20 @@ def render_evidence(
             ax.axis("off")
         ax = fig.add_subplot(gs[0, 2])
         ax.imshow(ra * 0.55 + 0.45 * ra.mean(-1, keepdims=True), interpolation="nearest")
-        ov = np.zeros(changed.shape + (4,))
-        ov[changed] = (0.92, 0.41, 0.20, 0.85)
+        if water != "ndwi":                     # a flood question: the answer is the new water
+            mask, colour = result["_new_water"], (0.16, 0.47, 0.84, 0.85)
+            frac = result["water_fraction_after"] - result["water_fraction_before"]
+            ttl = (f"new water (blue): {frac:.1%} of usable area\n"
+                   f"water in the after image, not in the before ({plain(WATER_NAMES.get(water.split('-without-')[0], water))})")
+        else:
+            mask, colour = changed, (0.92, 0.41, 0.20, 0.85)
+            how = (f"change > {result['z_threshold']}× the date-to-date scatter (before window)" if change == "rule"
+                   else plain(CHANGE_NAMES.get(change.split("-without-")[0], change)))
+            ttl = f"changed pixels (orange): {result['changed_fraction']:.1%} of usable area\n{how}"
+        ov = np.zeros(mask.shape + (4,))
+        ov[mask] = colour
         ax.imshow(ov, interpolation="nearest")
-        ax.set_title(f"changed pixels (orange): {result['changed_fraction']:.1%} of usable area\n"
-                     f"change > {result['z_threshold']}× the date-to-date scatter (before window)", loc="left", fontsize=9)
+        ax.set_title(ttl, loc="left", fontsize=9)
         ax.axis("off")
     else:
         ax = fig.add_subplot(gs[0, :])
@@ -97,7 +118,9 @@ def render_evidence(
                  f"shaded = windows compared", loc="left", fontsize=9)
 
     fig.suptitle(title, x=0.01, ha="left", fontsize=11)
-    fig.text(0.01, 0.005, f"Sentinel-2 L2A (Element84 Earth Search), ESA SCL cloud mask; bbox {ds.attrs.get('bbox')}",
+    clouds = {"scl": "ESA scene classification", "ocm": "OmniCloudMask"}.get(cloud, cloud)
+    fig.text(0.01, 0.005, f"Sentinel-2 L2A (Element84 Earth Search); clouds and shadows: {clouds}; "
+             f"bbox {ds.attrs.get('bbox')}",
              fontsize=7, color=INK_2)
     fig.savefig(out_path, dpi=120, bbox_inches="tight", facecolor=SURFACE)
     plt.close(fig)

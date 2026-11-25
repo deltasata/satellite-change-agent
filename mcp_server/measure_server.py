@@ -36,7 +36,8 @@ def measure_change(
     kind: Annotated[Literal["flood", "construction", "vegetation_loss"],
                     Field(description="flood; construction (new buildings, roads); vegetation_loss (fire, clearing)")],
     event_date: Annotated[date | None, Field(description="the day of the event, if the question names one; "
-                                             "then the periods are chosen for you")] = None,
+                                             "then the periods are chosen for you; for a month, its first day")] = None,
+    event_end: Annotated[date | None, Field(description="for a question about a month: its last day")] = None,
     before_start: Day = None, before_end: Day = None, after_start: Day = None, after_end: Day = None,
     size_km: Size = 5.0,
 ) -> MeasureResult:
@@ -50,10 +51,13 @@ def measure_change(
     TerraMind network; the result then says sensor "radar" and has no figure. Returns answer yes / no /
     cannot_tell, the rule written out with the numbers, the periods actually used, the image counts,
     the sensor and the figure path.
-    Give either event_date (then before = day-60 .. day-10 and after = day-3 .. day+3), or all four
+    Give either event_date (then for a flood or construction before = day-60 .. day-10 and after =
+    day-3 .. day+3; for vegetation loss the 8 images nearest the event on each side that are at least 10 %
+    cloud-free, from day-120 .. day-3 and day+7 .. day+90; for a month give event_end too), or all four
     period dates. A period you give replaces the one computed from event_date. Each period is at most
     120 days long."""
-    return _measure_change(lat=lat, lon=lon, kind=kind, event_date=event_date, before_start=before_start,
+    return _measure_change(lat=lat, lon=lon, kind=kind, event_date=event_date, event_end=event_end,
+                           before_start=before_start,
                            before_end=before_end, after_start=after_start, after_end=after_end, size_km=size_km)
 
 

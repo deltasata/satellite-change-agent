@@ -170,6 +170,38 @@ def cloud_mask_and_stack(lat: float, lon: float, start: date, end: date, size_km
         clear_fraction_per_month={m: round(float(np.mean(v)), 2) for m, v in months.items()})
 
 
+def cube_dates(cube_id: str) -> list[tuple[date, float]]:
+    """The dates of a stored cube with the cloud-free fraction of the area on each."""
+    ds = _load_cube(cube_id)
+    t = ds.time.values.astype("datetime64[D]").astype(object)
+    return list(zip(t, (float(v) for v in ds["valid_fraction"].values)))
+
+
+def subset_cube(cube_id: str, keep: list[date]) -> StackOutput:
+    """A stored cube with only the given dates of another cube (milestone B10: the chosen images)."""
+    ds = _load_cube(cube_id)
+    t = ds.time.values.astype("datetime64[D]").astype(object)
+    keep = sorted(set(keep))
+    sub_id = _hash("subset", cube_id, keep)
+    p = _cube_path(sub_id)
+    if not p.exists():
+        sub = ds.isel(time=[k for k, d in enumerate(t) if d in keep])
+        enc = {v: {"zlib": True, "complevel": 1} for v in sub.data_vars}
+        tmp = p.with_suffix(f".{os.getpid()}.tmp")
+        sub.to_netcdf(tmp, encoding=enc, engine="h5netcdf")
+        tmp.rename(p)
+    vf = dict(cube_dates(cube_id))
+    start, end = (keep[0], keep[-1]) if keep else (None, None)
+    months: dict[str, list[float]] = {}
+    for d in keep:
+        months.setdefault(d.strftime("%Y-%m"), []).append(vf[d])
+    return StackOutput(cube_id=sub_id if keep else None, area_bbox=list(ds.attrs["bbox"]), start=start or t[0],
+                       end=end or t[-1], n_dates=len(keep),
+                       n_usable_dates=sum(vf[d] >= USABLE_CLEAR_FRACTION for d in keep),
+                       usable_dates=[d for d in keep if vf[d] >= USABLE_CLEAR_FRACTION],
+                       clear_fraction_per_month={m: round(float(np.mean(v)), 2) for m, v in months.items()})
+
+
 # ------------------------------------------------------------------ 3. detect
 
 
@@ -189,6 +221,8 @@ class ChangeOutput(BaseModel):
     delta_ndbi_changed_median: float | None = Field(None, description="built-up index change in changed pixels")
     n_dates_before: int
     n_dates_after: int
+    fraction_one_look_after: float | None = Field(
+        None, description="of the usable pixels, the share seen cloud-free only once in the after window")
 
 
 def _result_path(result_id: str) -> Path:
@@ -243,6 +277,7 @@ def detect_change(before_cube_id: str, after_cube_id: str, water: str = "ndwi", 
         before_window=list(wb), after_window=list(wa),
         fraction_pixels_usable=round(r["fraction_pixels_usable"], 3),
         n_dates_before=r["n_dates_before"], n_dates_after=r["n_dates_after"],
+        fraction_one_look_after=round(r["fraction_one_look_after"], 3) if "fraction_one_look_after" in r else None,
         **({} if r["status"] != "ok" else dict(
             changed_fraction=round(r["changed_fraction"], 4),
             changed_area_km2=round(float(r["_changed"].sum()) * px_km2, 3),

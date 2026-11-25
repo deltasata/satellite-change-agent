@@ -1,5 +1,15 @@
 """Variants (2) and (3): a LangGraph workflow. The graph, written in code, holds the
-orchestration; the LLM fills in a JSON form at three decision nodes only.
+orchestration; the LLM fills in a JSON form at a few decision nodes only.
+
+Version 4 (default since 25 November 2026): the measurement is one call of measure_change
+(the measure MCP server), the same code the chat agent uses, so the graph gets the
+detectors adopted in milestones B1-B10. The model reads the question and writes the reply; it no longer
+judges the numbers:
+
+    check_question (LLM) -> parse_request (LLM) -> validate_plan (rule) -> measure (tool) -> write_answer (LLM)
+
+Versions 1-3 (experiments E06, E08) call the four step tools of Phase A, which measure with Phase A's rules
+(water index, change rule, ESA's cloud classification):
 
     check_question (LLM: is this a question we can measure? no -> fixed reply, END)
       -> parse_request (LLM) -> validate_plan (rule) -> stack (tool x2) -> check_coverage (rule)
@@ -31,7 +41,10 @@ MAX_WINDOW_DAYS = 120
 # Experiment E06 switch. v1: the LLM computes all window dates. v2: the LLM only extracts the event
 # date; code computes the windows of the domain guide (and their widening on a retry).
 # v3 (E08): additionally, code does the decision rule's subtraction and threshold comparison.
-GRAPH_VERSION = int(os.environ.get("EO_GRAPH_VERSION", "1"))
+# v4: one measure_change call (the adopted detectors); the model no longer decides answer / refine / abstain.
+GRAPH_VERSION = int(os.environ.get("EO_GRAPH_VERSION", "4"))
+# "any change" questions are measured as construction, as the exam does (a separate kind may follow)
+KIND_OF = {"flood": "flood", "construction": "construction", "vegetation_loss": "vegetation_loss", "any": "construction"}
 
 
 def rule_check(change_type: str, change: dict) -> str | None:
@@ -96,6 +109,20 @@ class Plan(BaseModel):
     after_end: date
 
 
+class MeasurePlan(BaseModel):
+    """Version 4: what the question says, nothing computed. measure_change chooses the periods."""
+    lat: float = Field(ge=-85, le=85)
+    lon: float = Field(ge=-180, le=180)
+    size_km: float = Field(default=5.0, ge=0.5, le=20)
+    change_type: Literal["flood", "construction", "vegetation_loss", "any"]
+    event_date: date | None = Field(None, description="the day of the event; for a month only, its first day")
+    event_end: date | None = Field(None, description="for a month only: its last day; else null")
+    before_start: date | None = Field(None, description="only if the question compares two periods")
+    before_end: date | None = None
+    after_start: date | None = None
+    after_end: date | None = None
+
+
 class Assessment(BaseModel):
     decision: Literal["answer", "refine", "abstain"]
     answer: Literal["yes", "no"] | None = Field(None, description="required when decision is 'answer'")
@@ -130,6 +157,7 @@ class AgentState(TypedDict, total=False):
     abstain_reason: str
     tool_calls: list
     path: list  # node names visited, for the record
+    measure_args: dict  # version 4: the inputs of the measure_change call
 
 
 class ToolError(RuntimeError):
@@ -170,6 +198,13 @@ def build_graph(llm: LLMBackend, tools: MCPTools):
         return out
 
     async def parse_request(state: AgentState):
+        if GRAPH_VERSION >= 4:
+            task = ("TASK: turn the question into a measurement plan. Return JSON only: the area centre and size, "
+                    "the change type, and the time exactly as the question gives it: event_date for a day; "
+                    "event_date and event_end (first and last day) for a month only; or the four dates "
+                    "before_start, before_end, after_start, after_end if it compares two periods (YYYY-MM-DD).")
+            plan = await ask(task, f"Question: {state['question']}", MeasurePlan)
+            return {**visit(state, "parse_request"), "plan": plan.model_dump(mode="json"), "retries": 0}
         task = ("TASK: turn the question into a measurement plan. Return JSON only: the area centre and "
                 "size, the change type, and the before/after windows (YYYY-MM-DD) chosen as described above.")
         if GRAPH_VERSION >= 2:
@@ -180,6 +215,8 @@ def build_graph(llm: LLMBackend, tools: MCPTools):
 
     async def validate_plan(state: AgentState):
         """Rules, no LLM: dates in the future -> abstain; clip over-long windows; order windows."""
+        if GRAPH_VERSION >= 4:
+            return validate_measure_plan(state)
         p = Plan.model_validate(state["plan"])
         if GRAPH_VERSION >= 2 and p.event_date is not None:
             for k, v in event_windows(p.event_date, retry=state.get("retries", 0) > 0).items():
@@ -194,6 +231,42 @@ def build_graph(llm: LLMBackend, tools: MCPTools):
         if p.before_end >= p.after_start:
             p.before_end = p.after_start - timedelta(days=1)
         return {**visit(state, "validate_plan"), "plan": p.model_dump(mode="json")}
+
+    def validate_measure_plan(state: AgentState):
+        """Version 4. A day (or month) wins over periods; periods need all four dates; the future -> abstain.
+        Every other check (period lengths, Sentinel-2's first date, ...) is measure_change's own."""
+        p = MeasurePlan.model_validate(state["plan"])
+        periods = [p.before_start, p.before_end, p.after_start, p.after_end]
+        args = dict(lat=p.lat, lon=p.lon, size_km=p.size_km, kind=KIND_OF[p.change_type])
+        if p.event_date is not None:
+            args["event_date"] = p.event_date.isoformat()
+            if p.event_end is not None and p.event_end > p.event_date:
+                args["event_end"] = p.event_end.isoformat()
+            first = p.event_date
+        elif None not in periods:
+            args.update(before_start=p.before_start.isoformat(), before_end=p.before_end.isoformat(),
+                        after_start=p.after_start.isoformat(), after_end=p.after_end.isoformat())
+            first = p.after_start
+        else:
+            return {**visit(state, "validate_plan"), "abstain_reason": "the question gives no day, month or periods"}
+        out = {**visit(state, "validate_plan"), "plan": p.model_dump(mode="json"), "measure_args": args}
+        if first > date.today():
+            out["abstain_reason"] = "the requested dates are in the future"
+        return out
+
+    async def measure(state: AgentState):
+        """Version 4: the whole measurement, by code (core/measure.py), in one tool call."""
+        try:
+            r = await tools(state, "measure_change", state["measure_args"])
+        except ToolError as e:  # a refused call (for example a period longer than 120 days) is information
+            return {**visit(state, "measure"), "abstain_reason": f"the measurement refused: {e}",
+                    "tool_calls": state["tool_calls"]}
+        out = {**visit(state, "measure"), "change": r, "evidence": r.get("figure"), "tool_calls": state["tool_calls"]}
+        if r.get("answer") in ("yes", "no"):
+            out["answer"] = r["answer"]
+        else:
+            out["abstain_reason"] = r.get("reason") or "the measurement could not tell"
+        return out
 
     async def stack(state: AgentState):
         p = state["plan"]
@@ -260,6 +333,7 @@ def build_graph(llm: LLMBackend, tools: MCPTools):
             "TASK: write the final explanation for the given answer (do not change the answer). "
             "Cite the measured numbers; if the answer is cannot_tell, say why.",
             f"Question: {state['question']}\nAnswer: {ans}\nPlan: {json.dumps(state.get('plan'))}\n"
+            + (f"Decision rule with its numbers: {(state.get('change') or {}).get('rule')}\n" if GRAPH_VERSION >= 4 else "") +
             f"Measurement: {json.dumps(state.get('change'), default=str)}\n"
             f"Abstain reason (if any): {state.get('abstain_reason')}", Final)
         return {**visit(state, "write_answer"), "answer": ans, "final": f.model_dump()}
@@ -287,6 +361,18 @@ def build_graph(llm: LLMBackend, tools: MCPTools):
         return "write_answer"
 
     g = StateGraph(AgentState)
+    if GRAPH_VERSION >= 4:
+        for name, fn in [("check_question", check_question), ("parse_request", parse_request),
+                         ("validate_plan", validate_plan), ("measure", measure), ("write_answer", write_answer)]:
+            g.add_node(name, fn)
+        g.add_edge(START, "check_question")
+        g.add_conditional_edges("check_question", after_check, ["parse_request", END])
+        g.add_edge("parse_request", "validate_plan")
+        g.add_conditional_edges("validate_plan", lambda s: "write_answer" if s.get("abstain_reason") else "measure",
+                                ["measure", "write_answer"])
+        g.add_edge("measure", "write_answer")
+        g.add_edge("write_answer", END)
+        return g.compile()
     for name, fn in [("check_question", check_question), ("parse_request", parse_request), ("validate_plan", validate_plan), ("stack", stack),
                      ("detect", detect), ("assess_evidence", assess_evidence), ("render", render),
                      ("write_answer", write_answer)]:

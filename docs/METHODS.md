@@ -553,7 +553,51 @@ From the review, every protocol also stated two things in advance:
 larger but narrower label set made the network more cautious, and both losses were certain. The cheapest
 idea, with no new training at all, was the one that won.
 
-## 13. Comparison with published Sen1Floods11 results
+## 13. Which images a fire question uses
+
+**The defect.** A wildfire question asked about a day borrowed the flood periods:
+- before: day −60 to day −10;
+- after: day −3 to day +3.
+
+The after period therefore began *before* the fire. The burn network (sections 10-11) was trained and
+tested only with after images from day +7 to day +60 (or +90). The benchmark never met this route,
+because its fire questions carry their own periods.
+
+**Three ways to choose the images** (protocol written before any score):
+- **A, the old route:** as above, with one wider retry. For a month, its 15th day.
+- **T, the training periods:** before day −60 to −3, after day +7 to +60; if too cloudy, day −120 to −3 and
+  +7 to +90. Every image.
+- **S, the 8 nearest images:** within T's wider limits, on each side, the 8 images nearest the fire that
+  are at least 10 % cloud-free (fewer if fewer exist).
+
+A question about a month uses its first day for the before side and its last day for the after side.
+
+**Questions with known answers.** 228 in all, from 55 fires:
+- **2026 fires:** at most 3 burnt (CEMS burnt fraction ≥ 0.10, answer "yes") and 3 unburnt (0, answer "no")
+  2.56 km patches per fire, drawn at random. Each is asked about the fire's day.
+- **The benchmark's 13 fires:** asked by month, as they are worded.
+
+The main number is the share answered correctly; "cannot tell" counts as not correct. Candidate minus A,
+95 % interval from resampling the fires. Condition: false "yes" may rise by at most 0.03.
+
+| rule | right | cannot tell | false "yes" | month questions right |
+|---|---|---|---|---|
+| A, old route | 0.855 | 0.048 | 0.000 | 8 of 13 |
+| T, training periods | 0.996 | 0 | 0.009 | 13 of 13 |
+| **S, 8 nearest (adopted)** | **0.996** | **0** | **0.009** | **13 of 13** |
+
+- **Both T and S pass:** right answers +0.140 [+0.076, +0.221]; false "yes" +0.009 [0.000, +0.028].
+- **They gave the same answer to every question.** The protocol then takes S: it needs fewer dates, so the
+  network runs faster on a CPU.
+- **The old route's 33 errors** were mostly burnt places answered "no" (22).
+- **The one remaining error** is an unburnt moorland patch in Scotland, with after images up to
+  mid-October. It is either a burn outside the mapped area or autumn browning. Reaching further in time
+  lets seasons pose as damage; that is why the reach has limits.
+
+Floods are unchanged, because water drains within days. Construction is unchanged, because those questions
+compare two given seasons.
+
+## 14. Comparison with published Sen1Floods11 results
 
 Here the setup is the published one: the data set's own images (radar: Earth Engine sigma naught;
 optical: Level-1C, 13 bands) and its official split (train 252, validation 89, test 90 tiles; Bolivia,
@@ -584,7 +628,7 @@ flood never seen, in the pipeline's own image formats), not from weak training. 
 optical gives the best water IoU of all (0.844). On Bolivia, the held-out country, the optical models
 keep their accuracy (0.79-0.81) while the radar models drop (0.49).
 
-## 14. The agent benchmark
+## 15. The agent benchmark
 
 `eval/benchmark.jsonl` (44 questions) and `eval/benchmark_v2.jsonl` (150): flood questions from
 Sen1Floods11 labels, construction and wildfire sites with verified dates, stable control sites, and
@@ -604,7 +648,13 @@ The final design follows from this: Claude holds the conversation, **all measure
 deterministic function** (`measure_change`), and two checks in code verify that the reply's answer and
 every number in it come from that function's results.
 
-## 15. Limits
+The benchmark compared the graph as it was then: its boxes called the four step tools, which measure with
+the first rules (water index, change rule, ESA's cloud classification). Since then the graph's default
+(`EO_GRAPH_VERSION=4`) measures through the same `measure_change`, so every variant uses the detectors of
+sections 3-13. The model still checks the question, reads the place and time, and writes the reply. The
+earlier versions are kept for reproduction.
+
+## 16. Limits
 
 - 10 flood events give wide intervals; the radar U-Net's gain is not significant (interval touches 0).
 - One seed per model in the optical comparison; three in the radar comparison.
@@ -630,6 +680,9 @@ every number in it come from that function's results.
   13 questions are few).
 - 42 held-out fires are too few to show a gain of about 0.04 in IoU of burnt (section 10): one large fire
   can move the pooled score by several hundredths. The time-series network was tested on fires only.
+- The image choice for fire questions (section 13) was tested on the 2026 fires, which section 11 had
+  already used to choose the burn network. These are different questions (which images, not which
+  network), but the set is not fresh for the network.
 - Both pixel-level fire test sets are mostly European (40 of 42 held-out fires, 42 of 44 new fires); only the
   benchmark's fires (10 of 13 outside Europe) test other regions. The new fires were mostly clear, so radar
   was not tested where optical images fail.

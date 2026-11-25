@@ -164,6 +164,8 @@ def detect_change_timeseries(
         "median_clear_obs_before": float(np.median(nb)),
         "median_clear_obs_after": float(np.median(na)),
         "fraction_pixels_usable": frac_usable,
+        # of the usable pixels, the share with only one cloud-free look in the after window (thin evidence)
+        "fraction_one_look_after": float((na[usable] == 1).mean()) if usable.any() else 0.0,
         "min_obs_required": {"before": min_obs_before, "after": min_obs_after},
     }
     if frac_usable < min_valid_pixels:

@@ -15,6 +15,7 @@ from pathlib import Path
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters
 
+from agents.graph import graph as G
 from agents.graph.graph import MCPTools, build_graph
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,7 +41,8 @@ def make_backend(backend: str, model: str | None = None):
 
 
 async def _run(question: str, llm) -> dict:
-    params = StdioServerParameters(command=sys.executable, args=["-m", "mcp_server.server"], cwd=str(ROOT),
+    server = "mcp_server.measure_server" if G.GRAPH_VERSION >= 4 else "mcp_server.server"   # v4: measure_change
+    params = StdioServerParameters(command=sys.executable, args=["-m", server], cwd=str(ROOT),
                                    env={"PYTHONNOUSERSITE": "1", "PYTHONPATH": str(ROOT), **_cache_env()})
     async with Client(params) as client:
         graph = build_graph(llm, MCPTools(client))

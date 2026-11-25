@@ -20,11 +20,14 @@ from a cluster bootstrap over events or places.
 | which pixels burnt (ImpactMesh-Fire, 42 fires) | change / noise > 4: 0.050 IoU | **U-Net: 0.772** (dNBR fitted: 0.560) | +0.722 [+0.671, +0.773] |
 | which pixels burnt, 44 new fires of 2026 (later than all training) | the U-Net above: 0.838 IoU | **U-TAE on every clear date: 0.859** | +0.021 [+0.012, +0.035] |
 | flooded places wrongly called construction (78 benchmark floods) | the construction network above: 21 | **minus the water network's water: 6** | −0.192 [−0.333, −0.072] |
+| wildfire questions answered correctly (228, 55 fires): which images | flood periods: 0.855 | **8 nearest images each side, within the training limits: 0.996** | +0.140 [+0.076, +0.221] |
 
 With the new cloud mask, the whole benchmark (150 questions) went from 0.853 to 0.860 (+0.007
 [−0.015, +0.029]); with the new change detector it stayed at 0.860; with the new burn detector it rose to
 0.887 (+0.027 [+0.006, +0.059]; all 13 wildfire questions right, against 9), and stayed there when U-TAE
-replaced the U-Net. Not worse was the condition
+replaced the U-Net. Removing the water from the construction map cost one answer, a filling reservoir asked
+as "any change" (0.880). The choice of fire images left it unchanged, because the benchmark's questions
+carry their own periods. Not worse was the condition
 for adopting each. The last step, from a map to yes or no, kept its hand-set thresholds: thresholds fitted
 on the benchmark (leaving one of its 83 groups out) and a logistic regression did not beat them. Asked "was there new construction?" about 78 flooded areas, the change detector answers
 a false "yes" 21 times, against 25 for the rule it replaced; on 570 unburnt patches next to fires, the burn
@@ -155,6 +158,13 @@ flowchart LR
     - In both failures the added labels were narrower than the test's, and the network became more
       cautious: more precise, but missing more.
 
+14. **Which images a question uses matters as much as the network.** Wildfire questions had borrowed the
+    flood periods, whose after period begins three days *before* the event. The burn network was trained
+    on images from a week to three months after a fire. Taking, on each side, the 8 images nearest the
+    fire that are at least 10 % cloud-free, within the training limits, raised the right answers on 228
+    fire questions from 0.855 to 0.996 (+0.140 [+0.076, +0.221]), with no "cannot tell" left. The month
+    questions went from 8 of 13 to 13 of 13.
+
 Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md)**.
 
 ## Status and roadmap
@@ -175,6 +185,8 @@ Full protocols, per-event tables and limits: **[docs/METHODS.md](docs/METHODS.md
 | a second, newer set of fires (CEMS 2026); radar and elevation for burnt land; TerraMind-base-Fire | done: U-TAE replaces the U-Net; radar not used |
 | why radar hurts on some fires; radar for fires under cloud | dropped: no gain on the new fires |
 | every clear date for floods and construction | open |
+| which images a fire question uses (8 nearest each side, within the training limits) | done: right answers 0.855 → 0.996 |
+| the LangGraph workflow measures with the adopted detectors (one `measure_change` call) | done |
 
 ## Repository
 
@@ -282,6 +294,8 @@ python -m core.data.spacenet7 labels && python -m core.data.spacenet7 && python 
 .venv-ml/bin/python -m experiments.b9_train --all --gpus 1,2,4,5 --model s,sn && python -m experiments.b9_report2
 python -m core.data.mmflood_s1rtc && .venv-ml/bin/python -m experiments.b9_radar_train prep
 .venv-ml/bin/python -m experiments.b9_radar_train --all --gpus 1,2,4,5 && .venv-ml/bin/python -m experiments.b9_report3
+python -m experiments.b10_fire_dates questions && for c in A S T; do python -m experiments.b10_fire_dates run $c; done
+python -m experiments.b10_fire_dates report
 python -m experiments.b4_exam run terramind+water B && python -m experiments.b4_exam run terramind+water C
 ```
 

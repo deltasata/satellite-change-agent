@@ -67,6 +67,20 @@ CHANGE_DETECTOR = "terramind+water"
 # right). It runs on the CPU in about 10-25 s per 5 km area instead of 0.5 s.
 VEGETATION_DETECTOR = "burn-utae"
 
+# If at least this share of the measured pixels was seen cloud-free only once after the event, the answer
+# carries a caution (Claude's choice, 24 November 2026; a reporting rule, it does not change any answer).
+ONE_LOOK_CAUTION = 0.5
+
+# Milestone B10 (docs/METHODS.md section 13): which images a fire question asked about a day (or a month) uses.
+# "fixed": the flood periods of event_periods (before day 1 of B10); "training": the burn network's training
+# periods, then its wide ones; "nearest8": within the wide ones, the 8 useful images nearest the fire on each side.
+# B10 result (25 November 2026), 228 fire questions with known answers from 55 fires: right 0.855 with "fixed",
+# 0.996 with "training" and with "nearest8" (+0.140 [+0.076, +0.221]); false "yes" 0.000 -> 0.009 (upper end
+# +0.028, margin 0.03). Both passed and gave the same answers, so by the protocol the 8-nearest rule was taken.
+FIRE_SELECTION = "nearest8"
+FIRE_PERIODS = {"normal": ((-60, -3), (7, 60)), "wide": ((-120, -3), (7, 90))}   # days from D1 (before), D2 (after)
+NEAREST_N, NEAREST_MIN_CLEAR = 8, 0.10
+
 Kind = Literal["flood", "construction", "vegetation_loss"]
 
 
@@ -82,7 +96,9 @@ class MeasureInput(BaseModel):
     lat: float = Field(ge=-85, le=85, description="latitude of the area centre, degrees north")
     lon: float = Field(ge=-180, le=180, description="longitude of the area centre, degrees east")
     kind: Kind = Field(description="flood, construction, or vegetation_loss (fire, clearing)")
-    event_date: date | None = Field(None, description="the day of the event, if the question names one")
+    event_date: date | None = Field(None, description="the day of the event, if the question names one; the first "
+                                                      "day of its span if the question names a span (a month)")
+    event_end: date | None = Field(None, description="the last day of the event's span (a month), if any")
     before_start: date | None = None
     before_end: date | None = None
     after_start: date | None = None
@@ -99,7 +115,9 @@ class MeasureResult(BaseModel):
     before_period: list[str] | None = Field(description="first and last day actually used")
     after_period: list[str] | None
     n_images_before: int | None
-    n_clear_images_before: int | None = Field(description="images with at least 80 % of the area cloud-free")
+    n_clear_images_before: int | None = Field(description="mostly clear images: at least 80 % of the area cloud-free. "
+                                              "A summary only; the measurement itself works pixel by pixel, so it can "
+                                              "succeed with none (clouds in different places on different days)")
     n_images_after: int | None
     n_clear_images_after: int | None
     measurement: dict | None = Field(description="all numbers from detect_change")
@@ -111,6 +129,7 @@ class MeasureResult(BaseModel):
                                                  "when clouds hide the ground)")
     n_radar_days_before: int | None = None
     n_radar_days_after: int | None = None
+    caution: str | None = Field(None, description="a weakness of the evidence the answer should mention, if any")
     steps: list[str] = Field(description="what was done, in order")
 
 
@@ -170,15 +189,86 @@ def radar_answer(out: dict, steps: list[str], bbox: list[float], periods, fold: 
                                 radar_days_before=rb.days, radar_days_after=ra.days))
 
 
+def _fire_measure(x: MeasureInput, out: dict, steps: list[str], area: dict, bands, cloud: str, change: str,
+                  selection: str) -> MeasureResult:
+    """Milestone B10: a fire question about a day D0 (D1 = D2 = D0) or a span D1..D2, with the images chosen by
+    `selection` ('training' or 'nearest8', docs/METHODS.md section 13)."""
+    d1 = x.event_date
+    d2 = x.event_end or d1
+    (wb0, wb1), (wa0, wa1) = FIRE_PERIODS["wide"]
+    b0, b1 = d1 + timedelta(days=wb0), d1 + timedelta(days=wb1)
+    a0, a1 = d2 + timedelta(days=wa0), min(d2 + timedelta(days=wa1), date.today())
+    out.update(before_period=[b0.isoformat(), b1.isoformat()], after_period=[a0.isoformat(), a1.isoformat()])
+    if a0 > date.today():
+        out["reason"] = "too early: a burn scar is measured from 7 days after the fire, and that day is in the future"
+        steps.append("dates checked: after period in the future -> cannot tell")
+        return MeasureResult(**out)
+    if b1 < SENTINEL2_FIRST_DATA:
+        out["reason"] = "a period lies before July 2015, when Sentinel-2 began taking images"
+        steps.append("dates checked: before Sentinel-2 -> cannot tell")
+        return MeasureResult(**out)
+    b = tools.cloud_mask_and_stack(start=b0, end=b1, bands=bands, cloud=cloud, **area)
+    a = tools.cloud_mask_and_stack(start=a0, end=a1, bands=bands, cloud=cloud, **area)
+    steps.append(f"images searched: before {b0}..{b1}: {b.n_dates}; after {a0}..{a1}: {a.n_dates}")
+    if b.cube_id is None or a.cube_id is None:
+        out["reason"] = "no images exist for this place in at least one period (for example open sea)"
+        return MeasureResult(**out)
+    tb, ta = tools.cube_dates(b.cube_id), tools.cube_dates(a.cube_id)
+    if selection == "nearest8":
+        kb = sorted([d for d, v in tb if v >= NEAREST_MIN_CLEAR], key=lambda d: (d1 - d).days)[:NEAREST_N]
+        ka = sorted([d for d, v in ta if v >= NEAREST_MIN_CLEAR], key=lambda d: (d - d2).days)[:NEAREST_N]
+        tries = [(kb, ka, f"the {NEAREST_N} images nearest the fire with at least {NEAREST_MIN_CLEAR:.0%} of the "
+                          f"area cloud-free (fewer if fewer exist)")]
+    elif selection == "training":
+        (nb0, _), (_, na1) = FIRE_PERIODS["normal"]
+        nb, na = d1 + timedelta(days=nb0), d2 + timedelta(days=na1)
+        tries = [([d for d, _ in tb if d >= nb], [d for d, _ in ta if d <= na], "every image of the burn network's "
+                  "training periods (day -60 to -3 and +7 to +60)"),
+                 ([d for d, _ in tb], [d for d, _ in ta], "every image of its wide periods (day -120 to -3 and +7 to +90)")]
+    else:
+        raise ValueError(f"unknown image selection {selection!r}")
+    for k, (kb, ka, words) in enumerate(tries):
+        sb, sa = tools.subset_cube(b.cube_id, kb), tools.subset_cube(a.cube_id, ka)
+        out.update(retried=k > 0, n_images_before=sb.n_dates, n_clear_images_before=sb.n_usable_dates,
+                   n_images_after=sa.n_dates, n_clear_images_after=sa.n_usable_dates)
+        if kb and ka:
+            out.update(before_period=[min(kb).isoformat(), max(kb).isoformat()],
+                       after_period=[min(ka).isoformat(), max(ka).isoformat()])
+        steps.append(f"images used: {words}: before {len(kb)}, of which {sb.n_usable_dates} mostly clear; "
+                     f"after {len(ka)}, of which {sa.n_usable_dates} mostly clear")
+        if sb.cube_id is None or sa.cube_id is None:
+            out.update(answer="cannot_tell", rule=None, reason="no useful image in at least one period")
+            continue
+        c = tools.detect_change(sb.cube_id, sa.cube_id, water="ndwi", change=change)
+        out["measurement"] = c.model_dump(mode="json", exclude={"result_id", "before_window", "after_window"})
+        steps.append(f"pixel by pixel: {c.fraction_pixels_usable:.0%} of the ground was seen cloud-free at least "
+                     f"twice before and at least once after (at least 50 % is needed)")
+        ans, rule = decide(x.kind, c)
+        steps.append(f"measured: status {c.status}; rule: {rule} -> {ans}")
+        out.update(answer=ans, rule=rule, reason=None if c.status == "ok" else rule)
+        if c.status == "ok":
+            if (c.fraction_one_look_after or 0) >= ONE_LOOK_CAUTION:
+                out["caution"] = (f"thin evidence after the fire: {c.fraction_one_look_after:.0%} of the measured "
+                                  f"ground was seen cloud-free only once, so thin cloud or haze missed by the cloud "
+                                  f"mask could hide a change or fake one")
+                steps.append("caution: " + out["caution"])
+            out["sensor"] = "optical"
+            out["figure"] = tools.render_evidence(c.result_id, f"{x.kind} at {x.lat:.4f}, {x.lon:.4f}").path
+            return MeasureResult(**out)
+    return MeasureResult(**out)
+
+
 def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: str | None = None,
-                   change: str | None = None, **kwargs) -> MeasureResult:
+                   change: str | None = None, selection: str | None = None, **kwargs) -> MeasureResult:
     """Measure one change at one place. `water` overrides the flood water detector (for tests only:
     'ndwi', or 'unet-without-<event>' for a question about a Sen1Floods11 event). `radar` is the radar
     model for floods under cloud: 'ALL' (default), '<event>' (that event left out; tests only), or None (off).
     `cloud` overrides the cloud detector ('scl' or 'ocm'; default CLOUD_DETECTOR). `change` overrides the
     change detector of construction questions ('rule', 'fsd', 'terramind', or '<model>-without-<group>' for
     a place inside an OSCD city; default CHANGE_DETECTOR), and of vegetation-loss questions ('rule',
-    'burn-unet', 'burn-terramind', 'burn-utae'; default VEGETATION_DETECTOR)."""
+    'burn-unet', 'burn-terramind', 'burn-utae'; default VEGETATION_DETECTOR). `selection` chooses the images of
+    a vegetation-loss question asked about a day or a span ('fixed', 'training', 'nearest8'; default
+    FIRE_SELECTION; milestone B10)."""
     cloud = cloud or CLOUD_DETECTOR
     x = MeasureInput(**kwargs)
     water = (water or FLOOD_WATER_DETECTOR) if x.kind == "flood" else "ndwi"
@@ -196,6 +286,11 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
 
     # The one retry with wider periods is allowed only when the periods came from an event date.
     may_widen = x.event_date is not None and not (x.before_start or x.before_end or x.after_start or x.after_end)
+    selection = selection or FIRE_SELECTION
+    if x.kind == "vegetation_loss" and may_widen and selection != "fixed":
+        return _fire_measure(x, out, steps, area, bands, cloud, change, selection)
+    if x.event_end is not None and x.event_end != x.event_date:
+        x = x.model_copy(update={"event_date": x.event_date + (x.event_end - x.event_date) / 2})   # the middle day
     first_periods = None
     for wider in ((False, True) if may_widen else (False,)):
         (b0, b1), (a0, a1) = _periods(x, wider)
@@ -226,16 +321,24 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
         a = tools.cloud_mask_and_stack(start=a0, end=a1, bands=bands, cloud=cloud, **area)
         out.update(n_images_before=b.n_dates, n_clear_images_before=b.n_usable_dates,
                    n_images_after=a.n_dates, n_clear_images_after=a.n_usable_dates)
-        steps.append(f"images: before {b0}..{b1}: {b.n_dates} ({b.n_usable_dates} clear); "
-                     f"after {a0}..{a1}: {a.n_dates} ({a.n_usable_dates} clear)")
+        steps.append(f"images: before {b0}..{b1}: {b.n_dates}, of which {b.n_usable_dates} mostly clear; "
+                     f"after {a0}..{a1}: {a.n_dates}, of which {a.n_usable_dates} mostly clear "
+                     f"(mostly clear: at least {tools.USABLE_CLEAR_FRACTION:.0%} of the area cloud-free)")
         if b.cube_id is None or a.cube_id is None:
             out["reason"] = "no images exist for this place in at least one period (for example open sea)"
             break
 
         c = tools.detect_change(b.cube_id, a.cube_id, water=water, change=change)
         out["measurement"] = c.model_dump(mode="json", exclude={"result_id", "before_window", "after_window"})
+        steps.append(f"pixel by pixel: {c.fraction_pixels_usable:.0%} of the ground was seen cloud-free at least "
+                     f"twice before and at least once after (at least 50 % is needed)")
         ans, rule = decide(x.kind, c)
         steps.append(f"measured: status {c.status}; rule: {rule} -> {ans}")
+        if c.status == "ok" and (c.fraction_one_look_after or 0) >= ONE_LOOK_CAUTION:
+            out["caution"] = (f"thin evidence after the event: {c.fraction_one_look_after:.0%} of the measured ground "
+                              f"was seen cloud-free only once, so thin cloud or haze missed by the cloud mask "
+                              f"could hide a change or fake one")
+            steps.append("caution: " + out["caution"])
         out.update(answer=ans, rule=rule, reason=None if c.status == "ok" else rule)
         if c.status == "ok":
             out["sensor"] = "optical"

@@ -279,7 +279,9 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
     if x.kind == "construction" and change != "rule":
         from core.models.change import available
         if not available(change):          # a public copy without the (unpublished) construction network
-            fallback = (f"the construction network ({CHANGE_NAMES.get(change, change)}) is not installed here, "
+            import re
+            name = re.sub(r"\s*\((milestones?|B\d)[^)]*\)", "", CHANGE_NAMES.get(change, change))
+            fallback = (f"the construction network ({name}) is not installed here, "
                         f"so the change rule was used instead; it is less accurate (see the methods)")
             change = "rule"
     bands = BANDS7 if (water != "ndwi" or change != "rule") else tools.DEFAULT_BANDS

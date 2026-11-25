@@ -11,7 +11,7 @@
    These networks are released under CC BY 4.0; please credit this repository and the data sets.
 2. The cloud mask, OmniCloudMask (Wright et al. 2025), is not re-shared here: its two weight files are
    downloaded from its authors' own Hugging Face page and converted to ONNX on your machine, exactly as
-   experiments/b3_export.py does (needs `pip install omnicloudmask==1.8.1`, which brings PyTorch).
+   experiments/b3_export.py does (needs `pip install omnicloudmask==1.8.1 onnx`; OmniCloudMask brings PyTorch).
 The construction network is not published (its OSCD training labels are CC BY-NC-SA); without it,
 construction questions use the change rule and say so in the answer.
 """

@@ -275,6 +275,13 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
     water = (water or FLOOD_WATER_DETECTOR) if x.kind == "flood" else "ndwi"
     change = ((change or CHANGE_DETECTOR) if x.kind == "construction" else
               (change or VEGETATION_DETECTOR) if x.kind == "vegetation_loss" else "rule")
+    fallback = None
+    if x.kind == "construction" and change != "rule":
+        from core.models.change import available
+        if not available(change):          # a public copy without the (unpublished) construction network
+            fallback = (f"the construction network ({CHANGE_NAMES.get(change, change)}) is not installed here, "
+                        f"so the change rule was used instead; it is less accurate (see the methods)")
+            change = "rule"
     bands = BANDS7 if (water != "ndwi" or change != "rule") else tools.DEFAULT_BANDS
     area = dict(lat=x.lat, lon=x.lon, size_km=x.size_km)
     steps: list[str] = []
@@ -284,6 +291,10 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
                water_detector=WATER_NAMES.get(water, water) if x.kind == "flood" else None,
                change_detector=CHANGE_NAMES.get(change.split("-without-")[0], change) if x.kind != "flood" else None,
                cloud_detector={"scl": "ESA scene classification (SCL)", "ocm": "OmniCloudMask (milestone B3)"}[cloud])
+
+    if fallback:
+        out["caution"] = fallback
+        steps.append("caution: " + fallback)
 
     # The one retry with wider periods is allowed only when the periods came from an event date.
     may_widen = x.event_date is not None and not (x.before_start or x.before_end or x.after_start or x.after_end)
@@ -336,10 +347,11 @@ def measure_change(water: str | None = None, radar: str | None = "ALL", cloud: s
         ans, rule = decide(x.kind, c)
         steps.append(f"measured: status {c.status}; rule: {rule} -> {ans}")
         if c.status == "ok" and (c.fraction_one_look_after or 0) >= ONE_LOOK_CAUTION:
-            out["caution"] = (f"thin evidence after the event: {c.fraction_one_look_after:.0%} of the measured ground "
-                              f"was seen cloud-free only once, so thin cloud or haze missed by the cloud mask "
-                              f"could hide a change or fake one")
-            steps.append("caution: " + out["caution"])
+            thin = (f"thin evidence after the event: {c.fraction_one_look_after:.0%} of the measured ground "
+                    f"was seen cloud-free only once, so thin cloud or haze missed by the cloud mask "
+                    f"could hide a change or fake one")
+            out["caution"] = "; ".join(filter(None, [out.get("caution"), thin]))
+            steps.append("caution: " + thin)
         out.update(answer=ans, rule=rule, reason=None if c.status == "ok" else rule)
         if c.status == "ok":
             out["sensor"] = "optical"

@@ -27,3 +27,10 @@ def test_fire_rule_is_the_adopted_one():
     from core import measure
     assert measure.FIRE_SELECTION == "nearest8" and measure.NEAREST_N == 8
     assert measure.FIRE_PERIODS["wide"] == ((-120, -3), (7, 90))
+
+
+def test_construction_falls_back_to_the_rule_without_the_network(tmp_path, monkeypatch):
+    """A public copy has no construction network (its training labels may not be shared)."""
+    from core.models import change
+    monkeypatch.setattr(change, "MODELS", tmp_path)
+    assert change.available("rule") and not change.available("terramind+water")

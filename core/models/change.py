@@ -51,6 +51,18 @@ def _parse(name: str) -> tuple[str, str]:
     return model, group or "ALL"
 
 
+def available(name: str) -> bool:
+    """True if the network's files are present (the rule needs none). The construction network is not
+    published (its OSCD training labels are CC BY-NC-SA), so a public copy may not have it."""
+    if name == "rule":
+        return True
+    name = name.replace(WATER_SUFFIX, "")
+    if name.startswith("burn-"):
+        return all((MODELS / f"burn_{name[5:]}_s{s}.onnx").exists() for s in range(3))
+    model, group = _parse(name)
+    return all((MODELS / f"change_{model}_{group}_s{s}.onnx").exists() for s in range(3))
+
+
 @lru_cache(maxsize=4)
 def _sessions(name: str):
     import onnxruntime as ort

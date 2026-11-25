@@ -1,4 +1,6 @@
-# satellite-change-agent
+# satellite-change-agent (EO-Agent)
+
+*Called EO-Agent on the website and in my CV; the same project.*
 
 **Ask a question about any place on Earth in plain language: "Was this town flooded after the storm?",
 "Did a wildfire burn here in January?", "Was there new construction here since 2022?" The system finds free
